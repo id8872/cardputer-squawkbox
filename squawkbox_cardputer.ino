@@ -80,7 +80,7 @@ struct Credentials {
     char ssid[64];
     char pass[64];
     char apikey[64];
-    char hostname;
+    char hostname[32];
 };
 Credentials creds;
 
