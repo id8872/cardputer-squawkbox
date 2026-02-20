@@ -18,3 +18,7 @@ Whether you're tracking "Bull Rushes," "Bear Dumps," or navigating "Chop Zones,"
 ### 🛠️ Hardware Requirements
 * **M5Stack Cardputer** (ESP32-S3)
 * Free API key from(https://finnhub.io/)
+
+## ⚠️ Disclaimer
+**This software is for educational and informational purposes only. Do not use this as financial advice.**
+Squawk Box and its algorithmic signals are a programmatic interpretation of market momentum and do not guarantee profits or prevent losses. Paper trading and simulated PnL are for entertainment/testing purposes. The author is not responsible for any financial losses incurred from using this software. Trade at your own risk.
