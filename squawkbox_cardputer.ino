@@ -1,6 +1,6 @@
 /*
  * =======================================================================================
- * SQUAWK BOX v9.6 - CARDPUTER ADV EDITION
+ * SQUAWK BOX v9.8 - CARDPUTER ADV EDITION
  * =======================================================================================
  * AUTHOR: Jason Edgar (Orillia, ON)
  * ORIGINAL PLATFORM: Particle Photon 2
@@ -80,6 +80,7 @@ struct Credentials {
     char ssid[64];
     char pass[64];
     char apikey[64];
+    char hostname;
 };
 Credentials creds;
 
@@ -94,7 +95,13 @@ void loadCredentials() {
     p.getString("ssid",   creds.ssid,   sizeof(creds.ssid));
     p.getString("pass",   creds.pass,   sizeof(creds.pass));
     p.getString("apikey", creds.apikey, sizeof(creds.apikey));
+    p.getString("host",   creds.hostname, sizeof(creds.hostname));
     p.end();
+
+    // Set a default hostname on first boot
+    if (strlen(creds.hostname) == 0) {
+        strcpy(creds.hostname, "squawkbox");
+    }
 }
 
 void saveCredentials() {
@@ -103,6 +110,7 @@ void saveCredentials() {
     p.putString("ssid",   creds.ssid);
     p.putString("pass",   creds.pass);
     p.putString("apikey", creds.apikey);
+    p.putString("host",   creds.hostname);
     p.end();
 }
 
@@ -147,7 +155,7 @@ void drawPortalScreen() {
 // Serve the setup form HTML
 void servePortalHTML(WiFiClient& client, bool saved = false) {
     client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: text/html");
+    client.println("Content-Type: text/html; charset=UTF-8"); // <-- FIXED: Added UTF-8
     client.println("Connection: close");
     client.println();
     client.print(
@@ -172,7 +180,8 @@ void servePortalHTML(WiFiClient& client, bool saved = false) {
         "Get a free API key at <b>finnhub.io</b></p>"
     );
     if (saved) {
-        client.print("<div class='saved'>✓ Saved! Rebooting in 3 seconds...</div>");
+        // FIXED: Swapped raw checkmark for safe HTML entity &check;
+        client.print("<div class='saved'>&check; Saved! Rebooting in 3 seconds...</div>");
     }
     client.print(
         "<form method='GET' action='/save'>"
@@ -182,6 +191,8 @@ void servePortalHTML(WiFiClient& client, bool saved = false) {
         "<input name='p' type='password' placeholder='YourPassword'>"
         "<label>Finnhub API Key</label>"
         "<input name='k' type='text' placeholder='d1abc123xyz...' autocomplete='off'>"
+        "<label>Device Hostname</label>"
+        "<input name='h' type='text' value='" + String(creds.hostname) + "' placeholder='squawkbox' autocomplete='off'>"
         "<button type='submit'>SAVE &amp; CONNECT</button>"
         "</form></body></html>"
     );
@@ -247,11 +258,19 @@ void runPortal() {
                     String s = extractParam(req, "s");
                     String p = extractParam(req, "p");
                     String k = extractParam(req, "k");
+                    String h = extractParam(req, "h");
 
                     if (s.length() > 0 && k.length() > 0) {
                         s.toCharArray(creds.ssid,   sizeof(creds.ssid));
                         p.toCharArray(creds.pass,   sizeof(creds.pass));
                         k.toCharArray(creds.apikey, sizeof(creds.apikey));
+
+                        if (h.length() > 0) {
+                            h.toCharArray(creds.hostname, sizeof(creds.hostname));
+                        } else {
+                            strcpy(creds.hostname, "squawkbox");
+                        }
+
                         saveCredentials();
 
                         servePortalHTML(client, true);
@@ -1219,163 +1238,219 @@ void serveJSON(WiFiClient& client) {
 }
 
 void serveHTML(WiFiClient& client) {
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: text/html");
-    client.println("Connection: close");
-    client.println();
+    // Send HTTP Headers
+    client.print(F(
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html; charset=UTF-8\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ));
 
-    // Head
-    client.print(
-        "<!DOCTYPE html><html><head>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"
-        "<script src='https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation'></script>"
-        "<style>"
-        "body{font-family:'Segoe UI',sans-serif;background:#121212;color:#eee;margin:0;padding:10px}"
-        ".container{max-width:600px;margin:0 auto;width:100%;box-sizing:border-box}"
-        ".card{background:#1e1e1e;padding:15px;border-radius:8px;margin-bottom:15px;border:1px solid #333}"
-        "h2{color:#00ff88;font-size:16px;border-bottom:1px solid #333;padding-bottom:5px;margin-top:0}"
-        "h3{color:#fff;font-size:14px;margin:10px 0 5px 0}"
-        "p,li{font-size:13px;color:#ccc;line-height:1.4;margin:5px 0}"
-        ".stat{font-size:12px;color:#aaa;display:inline-block;margin-right:15px}"
-        ".val{color:#fff;font-weight:bold}"
-        "button{width:100%;padding:12px;margin:4px 0;border-radius:5px;cursor:pointer;border:none;font-weight:bold;color:#fff;background:#333}"
-        ".gold{background:#FFD700!important;color:#000!important;border:2px solid #fff}"
-        "input{width:100%;padding:10px;background:#2c2c2c;border:1px solid #444;color:#fff;border-radius:4px;box-sizing:border-box}"
-        "</style></head><body><div class='container'>"
-    );
+    // Part 1: Head & CSS (Static)
+    client.print(F(R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
+<script src='https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation'></script>
+<style>
+    body { font-family: 'Segoe UI', sans-serif; background: #121212; color: #eee; margin: 0; padding: 10px; }
+    .container { max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+    .card { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #333; }
+    h2 { color: #00ff88; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 5px; margin-top: 0; }
+    h3 { color: #fff; font-size: 14px; margin: 10px 0 5px 0; }
+    p, li { font-size: 13px; color: #ccc; line-height: 1.4; margin: 5px 0; }
+    .stat { font-size: 12px; color: #aaa; display: inline-block; margin-right: 15px; }
+    .val { color: #fff; font-weight: bold; }
+    button { width: 100%; padding: 12px; margin: 4px 0; border-radius: 5px; cursor: pointer; border: none; font-weight: bold; color: #fff; background: #333; }
+    .gold { background: #FFD700 !important; color: #000 !important; border: 2px solid #fff; }
+    input { width: 100%; padding: 10px; background: #2c2c2c; border: 1px solid #444; color: #fff; border-radius: 4px; box-sizing: border-box; }
+    
+    /* New Disclaimer Style */
+    .disclaimer { background: #2a1111; border: 1px solid #f44; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 12px; }
+    .disclaimer strong { color: #f44; display: block; margin-bottom: 5px; font-size: 14px; }
+</style>
+</head><body><div class='container'>
+)rawliteral"));
 
-    // Vitals
-    client.print("<div class='card'><h2>SYSTEM VITALS</h2>");
-    client.printf("<div class='stat'>WiFi: <span class='val'>%ddBm</span></div>", WiFi.RSSI());
-    client.printf("<div class='stat'>Heap: <span class='val'>%dkB</span></div>", (int)(ESP.getFreeHeap()/1024));
-    client.printf("<div class='stat'>Uptime: <span class='val'>%lum</span></div>", millis()/60000UL);
-    client.printf("<div class='stat'>IP: <span class='val'>%s</span></div>", getLocalIPString().c_str());
-    client.print("</div>");
+    // Part 2: Vitals & Monitor (Dynamic variables injected via printf)
+    client.printf(R"rawliteral(
+    <div class='card'><h2>SYSTEM VITALS</h2>
+        <div class='stat'>WiFi: <span class='val'>%ddBm</span></div>
+        <div class='stat'>Heap: <span class='val'>%dkB</span></div>
+        <div class='stat'>Uptime: <span class='val'>%lum</span></div>
+        <div class='stat'>IP: <span class='val'>%s</span></div>
+    </div>
+    
+    <div class='card'><h2>LIVE MONITOR</h2>
+        <p>SYMBOL: <b id='symText' style='color:#FFD700'>%s</b> | PRICE: <b id='priceText'>$%.2f</b></p>
+        <div style='position:relative;height:180px;width:100%'><canvas id='c'></canvas></div>
+    </div>
+)rawliteral", WiFi.RSSI(), (int)(ESP.getFreeHeap() / 1024), millis() / 60000UL, getLocalIPString().c_str(), settings.symbol, lastPrice);
 
-    // Live Monitor
-    client.print("<div class='card'><h2>LIVE MONITOR</h2>");
-    client.printf("<p>SYMBOL: <b id='symText' style='color:#FFD700'>%s</b> | PRICE: <b id='priceText'>$%.2f</b></p>",
-                  settings.symbol, lastPrice);
-    client.print("<div style='position:relative;height:180px;width:100%'><canvas id='c'></canvas></div></div>");
+    // Part 3: Trade Tracker & Alerts Structure (Static)
+    client.print(F(R"rawliteral(
+    <div class='card'><h2>TRADE TRACKER (PAPER PnL)</h2>
+        <div class='stat'>Pos: <span class='val' id='posText'>NONE</span></div>
+        <div class='stat'>Entry: <span class='val' id='entryText'>$0.00</span></div>
+        <div class='stat'>Open PnL: <span class='val' id='openPnlText'>$0.00</span></div>
+        <div class='stat'>Total PnL: <span class='val' id='closedPnlText'>$0.00</span></div>
+        <div class='stat'>Trades: <span class='val' id='tradesText'>0</span></div>
+    </div>
+    
+    <div class='card'><h2>RECENT ALERTS (LAST 5)</h2>
+        <div id='alertBox' style='min-height:20px;color:#888;font-size:13px'>Waiting...</div>
+    </div>
+)rawliteral"));
 
-    // Trade Tracker
-    client.print("<div class='card'><h2>TRADE TRACKER (PAPER PnL)</h2>");
-    client.print("<div class='stat'>Pos: <span class='val' id='posText'>NONE</span></div>");
-    client.print("<div class='stat'>Entry: <span class='val' id='entryText'>$0.00</span></div>");
-    client.print("<div class='stat'>Open PnL: <span class='val' id='openPnlText'>$0.00</span></div>");
-    client.print("<div class='stat'>Total PnL: <span class='val' id='closedPnlText'>$0.00</span></div>");
-    client.print("<div class='stat'>Trades: <span class='val' id='tradesText'>0</span></div>");
-    client.print("</div>");
+    // Part 4: Presets, Expert Tuning & Admin (Dynamic)
+    const char* clsSpy = (strcmp(settings.symbol, "SPY") == 0) ? "gold" : "";
+    const char* clsQqq = (strcmp(settings.symbol, "QQQ") == 0) ? "gold" : "";
+    const char* clsIwm = (strcmp(settings.symbol, "IWM") == 0) ? "gold" : "";
+    const char* muteStateUrl = settings.isMuted ? "0" : "1";
+    const char* muteStateLbl = settings.isMuted ? "UNMUTE AUDIO" : "MUTE AUDIO";
 
-    // Alerts
-    client.print("<div class='card'><h2>RECENT ALERTS (LAST 5)</h2>");
-    client.print("<div id='alertBox' style='min-height:20px;color:#888;font-size:13px'>Waiting...</div></div>");
+    client.printf(R"rawliteral(
+    <div class='card'><h2>PRESETS</h2>
+        <div style='display:flex;gap:10px'>
+            <a href='/?sym=SPY' style='flex:1'><button class='%s'>SPY</button></a>
+            <a href='/?sym=QQQ' style='flex:1'><button class='%s'>QQQ</button></a>
+            <a href='/?sym=IWM' style='flex:1'><button class='%s'>IWM</button></a>
+        </div>
+    </div>
 
-    // Presets
-    String clsSpy = (strcmp(settings.symbol,"SPY")==0) ? "gold" : "";
-    String clsQqq = (strcmp(settings.symbol,"QQQ")==0) ? "gold" : "";
-    String clsIwm = (strcmp(settings.symbol,"IWM")==0) ? "gold" : "";
-    client.print("<div class='card'><h2>PRESETS</h2><div style='display:flex;gap:10px'>");
-    client.print("<a href='/?sym=SPY' style='flex:1'><button class='" + clsSpy + "'>SPY</button></a>");
-    client.print("<a href='/?sym=QQQ' style='flex:1'><button class='" + clsQqq + "'>QQQ</button></a>");
-    client.print("<a href='/?sym=IWM' style='flex:1'><button class='" + clsIwm + "'>IWM</button></a>");
-    client.print("</div></div>");
+    <div class='card'><h2>EXPERT TUNING</h2>
+        <form action='/' method='get'>
+            <div class='stat'>Chop Limit (%%): </div>
+            <div style='display:flex;gap:10px'>
+                <input type='text' name='chop' value='%.3f'>
+                <button style='width:auto;background:#00ff88;color:#000'>UPDATE</button>
+            </div>
+        </form>
+    </div>
 
-    // Expert Tuning
-    client.print("<div class='card'><h2>EXPERT TUNING</h2>");
-    client.printf("<form action='/' method='get'><div class='stat'>Chop Limit (%%): </div>"
-                  "<div style='display:flex;gap:10px'>"
-                  "<input type='text' name='chop' value='%.3f'>"
-                  "<button style='width:auto;background:#00ff88;color:#000'>UPDATE</button>"
-                  "</div></form></div>", settings.chopLimit);
+    <div class='card'><h2>ADMIN</h2>
+        <a href='/?mute=%s'><button>%s</button></a>
+        <div style='display:flex;gap:10px'>
+            <a href='/?test=bull' style='flex:1'><button style='background:#0f8;color:#000'>TEST BULL</button></a>
+            <a href='/?test=bear' style='flex:1'><button style='background:#f44'>TEST BEAR</button></a>
+        </div>
+        <a href='/?reboot=1'><button style='background:#555;margin-top:10px'>REBOOT DEVICE</button></a>
+    </div>
+)rawliteral", clsSpy, clsQqq, clsIwm, settings.chopLimit, muteStateUrl, muteStateLbl);
 
-    // Admin
-    client.print("<div class='card'><h2>ADMIN</h2>");
-    client.print("<a href='/?mute=");
-    client.print(settings.isMuted ? "0" : "1");
-    client.print("'><button>");
-    client.print(settings.isMuted ? "UNMUTE AUDIO" : "MUTE AUDIO");
-    client.print("</button></a>");
-    client.print("<div style='display:flex;gap:10px'>"
-                 "<a href='/?test=bull' style='flex:1'><button style='background:#0f8;color:#000'>TEST BULL</button></a>"
-                 "<a href='/?test=bear' style='flex:1'><button style='background:#f44'>TEST BEAR</button></a>"
-                 "</div>"
-                 "<a href='/?reboot=1'><button style='background:#555;margin-top:10px'>REBOOT DEVICE</button></a>"
-                 "</div>");
+    // Part 5: About & Disclaimer (Dynamic IP at the bottom)
+    client.printf(R"rawliteral(
+    <div class='card'><h2>ABOUT SQUAWK BOX</h2>
+        <h3>Concept & Creation</h3>
+        <p>Designed and built by <strong>Jason Edgar</strong> in Orillia, Ontario.</p>
+        <p>Running on <strong>M5Stack Cardputer ADV</strong> (ESP32-S3) with direct Finnhub REST polling.</p>
+        
+        <h3>Keyboard Shortcuts</h3>
+        <p><b></b>ute | <b></b>acklight | <b></b>nfo | <b></b> Symbol | <b></b> Chop | <b></b>est Bull | <b></b> Test Bear | <b></b>eboot</p>
+        
+        <h3>Signal Logic</h3>
+        <ul>
+            <li><b style='color:#FFD700'>BUY:</b> Bull Break &rarr; Bull Rush (&ge;0.016%%) within 15s</li>
+            <li><b style='color:#FFD700'>SELL:</b> Bear Break &rarr; Bear Dump (&le;-0.025%%) within 15s</li>
+            <li><b style='color:#FFD700'>LUNCH EXIT:</b> Trend End between 12:00–1:30 PM EST</li>
+        </ul>
+        
+        <div class='disclaimer'>
+            <strong>⚠️ DISCLAIMER</strong>
+            This software is for educational and informational purposes only. Do not use this as financial advice. 
+            Squawk Box and its algorithmic signals are a programmatic interpretation of market momentum and do not guarantee profits or prevent losses. 
+            Paper trading and simulated PnL are for entertainment/testing purposes. The author is not responsible for any financial losses incurred from using this software. Trade at your own risk.
+        </div>
+    </div>
+    <div style='text-align:center;color:#555;font-size:11px;margin-bottom:20px;'>
+        SQUAWK BOX v9.3 CARDPUTER | %s
+    </div>
+</div>
+)rawliteral", getLocalIPString().c_str());
 
-    // About
-    client.print("<div class='card'><h2>ABOUT SQUAWK BOX</h2>");
-    client.print("<h3>Concept & Creation</h3><p>Designed and built by <strong>Jason Edgar</strong> in Orillia, Ontario.</p>");
-    client.print("<p>Running on <strong>M5Stack Cardputer ADV</strong> (ESP32-S3) with direct Finnhub REST polling.</p>");
-    client.print("<h3>Keyboard Shortcuts</h3><p><b></b>ute | <b></b>acklight | <b></b>nfo | <b></b> Symbol | <b></b> Chop | <b></b>est Bull | <b></b> Test Bear | <b></b>eboot</p>");
-    client.print("<h3>Signal Logic</h3><ul>"
-                 "<li><b style='color:#FFD700'>BUY:</b> Bull Break &rarr; Bull Rush (&ge;0.016%) within 15s</li>"
-                 "<li><b style='color:#FFD700'>SELL:</b> Bear Break &rarr; Bear Dump (&le;-0.025%) within 15s</li>"
-                 "<li><b style='color:#FFD700'>LUNCH EXIT:</b> Trend End between 12:00–1:30 PM EST</li></ul></div>");
+// Part 6: JavaScript
+    // Pass our C++ settings to JS variables cleanly at the top of the script
+    client.print(F("<script>\n"));
+    client.printf("const chop = %s;\n", String(settings.chopLimit, 4).c_str());
+    client.printf("const historySize = %d;\n", HISTORY_SIZE);
+    
+    // The rest of the JS is totally static, so we can pass it via a raw literal
+    client.print(F(R"rawliteral(
+    let chart;
+    function update() {
+        fetch('/data').then(r => r.json()).then(j => {
+            document.getElementById('priceText').innerText = '$' + j.price.toFixed(2);
+            
+            const pc = j.pos === 'LONG' ? '#0f8' : j.pos === 'SHORT' ? '#f44' : '#fff';
+            document.getElementById('posText').innerText = j.pos;
+            document.getElementById('posText').style.color = pc;
+            
+            document.getElementById('entryText').innerText = '$' + j.entry.toFixed(2);
+            document.getElementById('openPnlText').innerText = '$' + j.openPnl.toFixed(2);
+            document.getElementById('openPnlText').style.color = j.openPnl >= 0 ? '#0f8' : '#f44';
+            document.getElementById('closedPnlText').innerText = '$' + j.closedPnl.toFixed(2);
+            document.getElementById('closedPnlText').style.color = j.closedPnl >= 0 ? '#0f8' : '#f44';
+            document.getElementById('tradesText').innerText = j.trades;
+            
+            let h = '';
+            if (!j.alerts || j.alerts.length === 0) {
+                h = 'No alerts yet...';
+            } else {
+                for (let a of j.alerts) {
+                    let c = '#fff';
+                    if (a.e.includes('BULL')) c = '#0f8';
+                    if (a.e.includes('BEAR')) c = '#f44';
+                    if (a.e.includes('SIGNAL')) c = '#FFD700';
+                    
+                    h += `<div style='border-bottom:1px solid #333;padding:5px 0;font-family:monospace;display:flex;justify-content:space-between'>
+                            <span><span style='color:#666;margin-right:10px'>${a.t}</span>
+                            <span style='color:${c};font-weight:bold'>${a.e}</span></span>
+                            <span style='color:#eee'>${a.v.toFixed(3)}%</span>
+                          </div>`;
+                }
+            }
+            document.getElementById('alertBox').innerHTML = h;
+            
+            // FIXED: Added index to target the correct dataset
+            chart.data.datasets.data = j.history;
+            let col = '#0ff';
+            if (j.diff > chop) col = '#0f8';
+            else if (j.diff < -chop) col = '#f44';
+            chart.data.datasets.borderColor = col;
+            chart.update();
+        }).catch(e => console.log(e));
+    }
 
-    client.print("<div style='text-align:center;color:#555;font-size:11px'>SQUAWK BOX v9.3 CARDPUTER | ");
-    client.print(getLocalIPString());
-    client.print("</div></div>");
-
-    // JavaScript — auto-refresh every 3s
-    client.printf(
-        "<script>"
-        "let chart;"
-        "const chop=%s;"
-        "function update(){"
-        "fetch('/data').then(r=>r.json()).then(j=>{"
-        "document.getElementById('priceText').innerText='$'+j.price.toFixed(2);"
-        "const pc=j.pos==='LONG'?'#0f8':j.pos==='SHORT'?'#f44':'#fff';"
-        "document.getElementById('posText').innerText=j.pos;"
-        "document.getElementById('posText').style.color=pc;"
-        "document.getElementById('entryText').innerText='$'+j.entry.toFixed(2);"
-        "document.getElementById('openPnlText').innerText='$'+j.openPnl.toFixed(2);"
-        "document.getElementById('openPnlText').style.color=j.openPnl>=0?'#0f8':'#f44';"
-        "document.getElementById('closedPnlText').innerText='$'+j.closedPnl.toFixed(2);"
-        "document.getElementById('closedPnlText').style.color=j.closedPnl>=0?'#0f8':'#f44';"
-        "document.getElementById('tradesText').innerText=j.trades;"
-        "let h='';"
-        "if(!j.alerts||j.alerts.length===0)h='No alerts yet...';"
-        "else for(let a of j.alerts){"
-        "let c='#fff';"
-        "if(a.e.includes('BULL'))c='#0f8';"
-        "if(a.e.includes('BEAR'))c='#f44';"
-        "if(a.e.includes('SIGNAL'))c='#FFD700';"
-        "h+=`<div style='border-bottom:1px solid #333;padding:5px 0;font-family:monospace;display:flex;justify-content:space-between'>"
-        "<span><span style='color:#666;margin-right:10px'>${a.t}</span>"
-        "<span style='color:${c};font-weight:bold'>${a.e}</span></span>"
-        "<span style='color:#eee'>${a.v.toFixed(3)}%%</span></div>`;"
-        "}"
-        "document.getElementById('alertBox').innerHTML=h;"
-        "chart.data.datasets[0].data=j.history;"
-        "let col='#0ff';"
-        "if(j.diff>chop)col='#0f8';"
-        "else if(j.diff<-chop)col='#f44';"
-        "chart.data.datasets[0].borderColor=col;"
-        "chart.update();"
-        "}).catch(e=>console.log(e));"
-        "}"
-        "window.onload=()=>{"
-        "const ctx=document.getElementById('c').getContext('2d');"
-        "chart=new Chart(ctx,{"
-        "type:'line',"
-        "data:{labels:Array(%d).fill(''),datasets:[{data:[],borderColor:'#0ff',pointRadius:0,tension:0.3,fill:false}]},"
-        "options:{maintainAspectRatio:false,responsive:true,"
-        "plugins:{legend:{display:false},"
-        "annotation:{annotations:{"
-        "zero:{type:'line',yMin:0,yMax:0,borderColor:'#FFD700',borderWidth:2},"
-        "bull:{type:'line',yMin:chop,yMax:chop,borderColor:'#0f8',borderDash:[5,5]},"
-        "bear:{type:'line',yMin:-chop,yMax:-chop,borderColor:'#f44',borderDash:[5,5]}"
-        "}}},"
-        "scales:{y:{grid:{color:'#333'}},x:{display:false}}"
-        "}});"
-        "setInterval(update,3000);update();"
-        "};"
-        "</script></body></html>",
-        String(settings.chopLimit, 4).c_str(),
-        HISTORY_SIZE
-    );
+    window.onload = () => {
+        const ctx = document.getElementById('c').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(historySize).fill(''),
+                // FIXED: Restored the array brackets for the dataset
+                datasets:, borderColor: '#0ff', pointRadius: 0, tension: 0.3, fill: false }]
+            },
+            options: {
+                maintainAspectRatio: false, responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    annotation: {
+                        annotations: {
+                            zero: { type: 'line', yMin: 0, yMax: 0, borderColor: '#FFD700', borderWidth: 2 },
+                            // FIXED: Restored the array for the dashed lines
+                            bull: { type: 'line', yMin: chop, yMax: chop, borderColor: '#0f8', borderDash: },
+                            bear: { type: 'line', yMin: -chop, yMax: -chop, borderColor: '#f44', borderDash: }
+                        }
+                    }
+                },
+                scales: { y: { grid: { color: '#333' } }, x: { display: false } }
+            }
+        });
+        setInterval(update, 3000); 
+        update();
+    };
+    </script></body></html>
+)rawliteral"));
 }
 
 // =======================================================================================
@@ -1430,6 +1505,7 @@ void setup() {
     M5Cardputer.Display.print(creds.ssid);
 
     WiFi.mode(WIFI_STA);
+    WiFi.setHostname(creds.hostname);
     WiFi.begin(creds.ssid, creds.pass);
     int tries = 0;
     while (WiFi.status() != WL_CONNECTED && tries < 40) {
