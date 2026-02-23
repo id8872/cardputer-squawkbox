@@ -46,11 +46,12 @@ Install via Arduino Library Manager:
 ## 🚀 First Time Setup
 
 1. Flash `squawkbox_cardputer.ino` to your Cardputer as-is — no configuration needed beforehand.
-2. On first boot, the device creates a WiFi hotspot: **`SQUAWKBOX-SETUP`** (no password).
-3. Connect your phone or laptop to that network.
-4. A setup page opens automatically, or visit **`192.168.4.1`** in your browser.
-5. Enter your WiFi network name, password, and Finnhub API key → tap **Save & Connect**.
-6. The device saves your credentials and reboots into normal operating mode.
+2. You will need an API key from Finnhub to collect data. https://finnhub.io/register
+3. On first boot, the device creates a WiFi hotspot: **`SQUAWKBOX-SETUP`** (no password).
+4. Connect your phone or laptop to that network.
+5. A setup page opens automatically, or visit **`192.168.4.1`** in your browser.
+6. Enter your WiFi network name, password, and Finnhub API key → tap **Save & Connect**.
+7. The device saves your credentials and reboots into normal operating mode.
 
 **To change credentials later:** Hold **`W`** while powering on (or while rebooting with `R`). The setup portal will launch again.
 
