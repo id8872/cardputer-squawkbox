@@ -172,4 +172,4 @@ Squawk Box is a personal hobby project and paper-trading simulator. It does **no
 
 MIT License — see `LICENSE` for full text.
 
-Copyright (c) 2025 Jason Edgar
+Copyright © 2025 Jason Edgar
