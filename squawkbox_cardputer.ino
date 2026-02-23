@@ -74,37 +74,42 @@
 
 // =======================================================================================
 // WIFI CREDENTIALS (stored in NVS, never hardcoded)
+// Credentials live in their own NVS namespace "wificreds", separate from trading
+// settings ("squawk"), so they survive a settings version bump without being wiped.
 // =======================================================================================
 struct Credentials {
     char ssid[64];
     char pass[64];
-    char apikey[64];
+    char apikey[64];   // Finnhub API key — free tier supports ~60 calls/min
 };
 Credentials creds;
 
-// Captive portal
+// Portal objects — only used when in setup mode, idle otherwise
 DNSServer     dnsServer;
 WiFiServer    portalServer(80);
 bool          inPortalMode = false;
 
+// Load from NVS — empty strings if not yet saved (first boot)
 void loadCredentials() {
     Preferences p;
-    p.begin("wificreds", true);
+    p.begin("wificreds", true);  // true = read-only
     p.getString("ssid",   creds.ssid,   sizeof(creds.ssid));
     p.getString("pass",   creds.pass,   sizeof(creds.pass));
     p.getString("apikey", creds.apikey, sizeof(creds.apikey));
     p.end();
 }
 
+// Persist to NVS — survives power loss and OTA flashes
 void saveCredentials() {
     Preferences p;
-    p.begin("wificreds", false);
+    p.begin("wificreds", false);  // false = read-write
     p.putString("ssid",   creds.ssid);
     p.putString("pass",   creds.pass);
     p.putString("apikey", creds.apikey);
     p.end();
 }
 
+// WiFi password is optional (open networks exist), but SSID and API key are required
 bool hasCredentials() {
     return strlen(creds.ssid) > 0 && strlen(creds.apikey) > 0;
 }
@@ -211,16 +216,19 @@ String extractParam(const String& req, const String& key) {
     return urlDecode(req.substring(idx, end));
 }
 
-// Full captive portal loop — blocks until credentials are saved
+// Full captive portal loop — blocks until credentials are saved, then reboots.
+// Called on first boot (no credentials) or when user presses [W].
+// The DNS server redirects ALL domains to 192.168.4.1 so phones that try to
+// auto-detect a captive portal (e.g. iOS, Android) get sent straight to the form.
 void runPortal() {
     inPortalMode = true;
 
-    // Start AP
+    // Broadcast our own AP — no password so any device can connect
     WiFi.mode(WIFI_AP);
     WiFi.softAP("SQUAWKBOX-SETUP");
-    delay(500);
+    delay(500);  // Give the AP time to stabilise before accepting DNS queries
 
-    // DNS: redirect all domains to 192.168.4.1
+    // Wildcard DNS: any domain → 192.168.4.1 (the portal IP)
     dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
     portalServer.begin();
 
@@ -285,12 +293,21 @@ void runPortal() {
 
 // =======================================================================================
 // STRATEGY PARAMETERS (percentage-based, same as original)
+// alphaFast / alphaSlow: EMA smoothing factors. Higher = more reactive to price changes.
+//   SPY moves slowly and tightly, so uses lower alphas.
+//   IWM (small caps) is more volatile, so uses higher alphas to track it properly.
+// chopLimit: minimum velocity % to be considered a directional move vs. noise.
+//   Tuned per-symbol based on typical daily volatility.
 // =======================================================================================
 const float P_SPY_FAST = 0.22f; const float P_SPY_SLOW = 0.10f; const float P_SPY_CHOP = 0.010f;
 const float P_QQQ_FAST = 0.25f; const float P_QQQ_SLOW = 0.12f; const float P_QQQ_CHOP = 0.014f;
 const float P_IWM_FAST = 0.28f; const float P_IWM_SLOW = 0.14f; const float P_IWM_CHOP = 0.035f;
 
-// Confluence thresholds
+// Confluence thresholds:
+// BULL_RUSH: the velocity gain required after a BULL BREAK to confirm a BUY signal.
+// BEAR_DUMP: the velocity drop required after a BEAR BREAK to confirm a SELL signal.
+// CONFIRMATION_WINDOW: how long (ms) we wait for the confirmation after a BREAK.
+//   If confirmation doesn't arrive within 15s, the pending signal is discarded.
 const unsigned long CONFIRMATION_WINDOW = 15000UL;
 const float BULL_RUSH_THRESHOLD =  0.016f;
 const float BEAR_DUMP_THRESHOLD = -0.025f;
@@ -312,20 +329,27 @@ Preferences prefs;
 // =======================================================================================
 // SYSTEM STATE
 // =======================================================================================
+// EMAs and velocity are volatile because they're written in the main loop and
+// read in display/web functions — volatile prevents the compiler from caching stale values.
 volatile float emaFast = 0, emaSlow = 0, diff = 0;
 volatile float lastPrice = 0;
-bool initialized   = false;
-bool forceRedraw   = true;      // full screen redraw flag
+bool initialized   = false;   // false until first valid price is received
+bool forceRedraw   = true;    // set true to trigger a full screen repaint next loop
 
-unsigned long lastPollMs   = 0;
-unsigned long lastWebMs    = 0;
+unsigned long lastPollMs   = 0;   // tracks when we last hit Finnhub
+unsigned long lastWebMs    = 0;   // reserved for future web rate-limiting
 
 // --- SIGNAL STATE MACHINE ---
+// IDLE     → waiting for a BREAK event
+// TRIGGERED→ BREAK seen, waiting for RUSH/DUMP confirmation within window
+// (CONFIRMED is reserved but currently unused — signals fire immediately on confirmation)
 enum SignalState { IDLE, TRIGGERED, CONFIRMED };
 SignalState currentSignal  = IDLE;
-unsigned long lastTriggerTime = 0;
+unsigned long lastTriggerTime = 0;  // millis() when the last BREAK was detected
 
 // --- PAPER TRADING ---
+// All PnL is in raw price-per-share (no share size), matching the original Photon version.
+// Positive closedPnL = net winner. tradeCount only increments on close, not open.
 enum PositionState { POS_NONE, POS_LONG, POS_SHORT };
 PositionState currentPos   = POS_NONE;
 float tradeEntryPrice      = 0.0f;
@@ -333,25 +357,30 @@ float closedPnL            = 0.0f;
 int   tradeCount           = 0;
 
 // --- ALERT LOG ---
+// Ring buffer of the 5 most recent events — shown on web console and Serial
 struct Alert {
-    char time[9];
-    char type[16];
-    float val;
+    char time[9];   // "HH:MM:SS\0"
+    char type[16];  // e.g. "BULL BREAK", "BUY SIGNAL"
+    float val;      // velocity value at time of event
 };
 Alert alertLog[5];
 
 // --- GRAPH / HISTORY BUFFER ---
-const int HISTORY_SIZE = 60;          // 60 samples fits well on 240px wide screen
+// Ring buffer of velocity readings for the on-device bar chart and web graph.
+// 60 samples × 4px/bar = 240px — exactly fills the display width.
+const int HISTORY_SIZE = 60;
 volatile float velocityHistory[HISTORY_SIZE];
-volatile int   historyHead = 0;
+volatile int   historyHead = 0;  // index of the NEXT write position (oldest data)
 
 // --- AUDIO STATE MACHINE ---
+// Non-blocking tone sequencer. bzState is set by signal events;
+// updateBuzzer() fires the appropriate tone pattern each loop() tick.
 enum BuzzerState { BZ_IDLE, BZ_BULL, BZ_BEAR, BZ_STUTTER };
 BuzzerState bzState  = BZ_IDLE;
-unsigned long bzTimer = 0;
+unsigned long bzTimer = 0;   // millis() when current tone sequence started
 
-const int DUR_BULLISH = 200;
-const int DUR_BEARISH = 1000;
+const int DUR_BULLISH = 200;   // ms — short sharp beep for bull events
+const int DUR_BEARISH = 1000;  // ms — longer low tone for bear events
 
 // --- WEB SERVER ---
 WiFiServer webServer(80);
@@ -403,12 +432,14 @@ void serveHTML(WiFiClient& client);
 
 // =======================================================================================
 // PAPER TRADING ENGINE
+// Tracks a single simulated position at a time. No share size — PnL is raw price delta.
+// Flipping direction (LONG → SHORT or vice versa) automatically closes the prior trade first.
 // =======================================================================================
 void closePosition() {
     if (currentPos == POS_NONE) return;
     float pnl = 0.0f;
-    if (currentPos == POS_LONG)  pnl = lastPrice - tradeEntryPrice;
-    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - lastPrice;
+    if (currentPos == POS_LONG)  pnl = lastPrice - tradeEntryPrice;  // profit if price rose
+    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - lastPrice;  // profit if price fell
     closedPnL += pnl;
     tradeCount++;
     currentPos     = POS_NONE;
@@ -416,15 +447,18 @@ void closePosition() {
 }
 
 void openLong() {
-    if (currentPos == POS_SHORT) closePosition();
+    if (currentPos == POS_SHORT) closePosition();  // auto-close short before going long
     if (currentPos == POS_NONE)  { currentPos = POS_LONG;  tradeEntryPrice = lastPrice; }
+    // If already LONG, do nothing — don't double-enter
 }
 
 void openShort() {
-    if (currentPos == POS_LONG)  closePosition();
+    if (currentPos == POS_LONG)  closePosition();  // auto-close long before going short
     if (currentPos == POS_NONE)  { currentPos = POS_SHORT; tradeEntryPrice = lastPrice; }
+    // If already SHORT, do nothing
 }
 
+// Called when switching symbols — wipes trades so PnL reflects the new ticker only
 void resetTrades() {
     currentPos      = POS_NONE;
     tradeEntryPrice = 0.0f;
@@ -433,13 +467,16 @@ void resetTrades() {
 }
 
 // =======================================================================================
-// SETTINGS (NVS)
+// SETTINGS (NVS via Preferences)
+// Version byte (ver=19) acts as a schema guard. If the stored version doesn't match,
+// we're either on a fresh chip or after a breaking settings change — defaults are written.
+// Increment the version number any time you add/remove/rename a settings key.
 // =======================================================================================
 void loadSettings() {
     prefs.begin("squawk", false);
     uint8_t ver = prefs.getUChar("ver", 0);
     if (ver != 19) {
-        // First boot or version bump — write defaults
+        // First boot or schema change — initialise with sensible defaults
         strcpy(settings.symbol, "SPY");
         applySymbolPreset("SPY");
         settings.isMuted    = false;
@@ -453,7 +490,7 @@ void loadSettings() {
         settings.isMuted     = prefs.getBool ("muted",  false);
         settings.backlightOn = prefs.getBool ("bl",     true);
         prefs.getString("sym", settings.symbol, sizeof(settings.symbol));
-        if (strlen(settings.symbol) == 0) strcpy(settings.symbol, "SPY");
+        if (strlen(settings.symbol) == 0) strcpy(settings.symbol, "SPY");  // safety fallback
     }
     prefs.end();
 }
@@ -521,16 +558,23 @@ String getLocalIPString() {
 }
 
 // =======================================================================================
-// SMART POLLING INTERVAL (seconds) — mirrors original logic
+// SMART POLLING INTERVAL (seconds)
+// Adapts poll rate to market conditions to conserve Finnhub API calls (60/min free tier)
+// while maximising responsiveness during the periods that matter most.
+//   Weekend     → 300s  (5 min) — market closed, no need to hammer the API
+//   Off-hours   → 60s   (1 min) — pre/post market, low activity
+//   Open/Close  → 2s    — 9:30–10:00 and 15:00–16:00 are highest-volatility windows
+//   Lunch       → 10s   — 12:00 is chop territory, slower polling saves API calls
+//   Normal      → 4s    — mid-session baseline
 // =======================================================================================
 unsigned long getSmartInterval() {
     int wd = getWeekday();
-    if (wd == 0 || wd == 6) return 300; // Weekend
+    if (wd == 0 || wd == 6) return 300;  // Saturday(0) or Sunday(6)
     int h = getHour(); int m = getMinute();
-    if (h < 8 || (h == 8 && m < 30) || h >= 16) return 60;  // Off-hours
-    if ((h == 9 && m >= 30) || h == 10 || h == 15) return 2; // High-freq open/close
-    if (h == 12) return 10;
-    return 4;
+    if (h < 8 || (h == 8 && m < 30) || h >= 16) return 60;   // outside market hours
+    if ((h == 9 && m >= 30) || h == 10 || h == 15) return 2;  // open and close sprints
+    if (h == 12) return 10;                                     // lunch chop window
+    return 4;                                                   // normal mid-session
 }
 
 // =======================================================================================
@@ -567,11 +611,24 @@ void fetchQuote() {
 }
 
 // =======================================================================================
-// MARKET ENGINE (EMA + PERCENTAGE VELOCITY) — logic identical to original
+// MARKET ENGINE (EMA + PERCENTAGE VELOCITY)
+// Each new price runs through two EMAs with different smoothing factors.
+// The gap between them, expressed as a % of price, is "velocity" (diff).
+// Positive diff = fast EMA above slow = upward momentum.
+// Negative diff = fast EMA below slow = downward momentum.
+// Near-zero diff (within chopLimit) = chop zone, no directional bias.
+//
+// Alert detection compares the current diff to the previous diff:
+//   BULL/BEAR BREAK  → velocity crosses the chop threshold (trend beginning)
+//   BULL RUSH        → velocity accelerates 20%+ above its prior value (trend strengthening)
+//   BEAR DUMP        → velocity drops 20%+ below its prior value (same, downside)
+//   TREND END        → velocity falls back inside the chop band (trend ending)
 // =======================================================================================
 void processPrice(float p) {
     lastPrice = p;
 
+    // First price received — seed both EMAs to current price so diff starts at 0
+    // rather than producing a false signal on startup.
     if (!initialized) {
         emaFast = lastPrice;
         emaSlow = lastPrice;
@@ -581,41 +638,50 @@ void processPrice(float p) {
         return;
     }
 
-    float prevDiff = diff;
+    float prevDiff = diff;  // snapshot before updating, used for BREAK/RUSH detection
     emaFast = (lastPrice * settings.alphaFast) + (emaFast * (1.0f - settings.alphaFast));
     emaSlow = (lastPrice * settings.alphaSlow) + (emaSlow * (1.0f - settings.alphaSlow));
 
+    // Express the EMA gap as a percentage of price for symbol-agnostic comparison
     float rawDiff = emaFast - emaSlow;
     diff = (rawDiff / lastPrice) * 100.0f;
 
+    // Store in circular buffer for the on-device graph and web chart
     velocityHistory[historyHead] = diff;
     historyHead = (historyHead + 1) % HISTORY_SIZE;
 
-    // --- ALERT LOGIC (mirrors original exactly) ---
+    // --- ALERT DETECTION ---
     if (fabs(diff) > settings.chopLimit) {
         if (diff > 0) {
+            // Bullish side
             if (prevDiff <= settings.chopLimit) {
+                // Was in chop, now above threshold — trend starting upward
                 bzState = BZ_BULL; bzTimer = millis();
                 logEvent("BULL BREAK", diff);
                 updateSignalLogic(diff, "BULL BREAK");
             } else if (diff > (prevDiff * 1.20f)) {
+                // Already bullish and accelerating by 20%+ — momentum surge
                 bzState = BZ_STUTTER; bzTimer = millis();
                 logEvent("BULL RUSH", diff);
                 updateSignalLogic(diff, "BULL RUSH");
             }
         } else {
+            // Bearish side
             if (prevDiff >= -settings.chopLimit) {
+                // Was in chop, now below threshold — trend starting downward
                 bzState = BZ_BEAR; bzTimer = millis();
                 logEvent("BEAR BREAK", diff);
                 updateSignalLogic(diff, "BEAR BREAK");
             } else if (diff < (prevDiff * 1.20f)) {
+                // Already bearish and accelerating — momentum dump
                 bzState = BZ_STUTTER; bzTimer = millis();
                 logEvent("BEAR DUMP", diff);
                 updateSignalLogic(diff, "BEAR DUMP");
             }
         }
     } else if (fabs(prevDiff) > settings.chopLimit) {
-        bzState = BZ_BULL; bzTimer = millis(); // short blip on trend end
+        // Was trending, now back inside chop band — trend has ended
+        bzState = BZ_BULL; bzTimer = millis();  // short blip on trend end
         logEvent("TREND END", diff);
         updateSignalLogic(diff, "TREND END");
     }
@@ -626,10 +692,22 @@ void processPrice(float p) {
 }
 
 // =======================================================================================
-// CONFLUENCE SIGNAL ENGINE (logic identical to original)
+// CONFLUENCE SIGNAL ENGINE
+// Two-step confirmation required before a trade fires:
+//   Step 1: BULL/BEAR BREAK — velocity crosses the chop threshold. Sets TRIGGERED state
+//           and starts a 15-second confirmation window.
+//   Step 2: BULL RUSH / BEAR DUMP — acceleration within the window. If momentum hits
+//           the rush/dump threshold, a BUY or SELL signal fires.
+//
+// If the confirmation never arrives (window expires), TRIGGERED resets to IDLE.
+// This filters out false breakouts that reverse immediately.
+//
+// TREND END always closes any open position regardless of the above, and resets the
+// signal state so stale TRIGGERED states don't linger across a trend boundary.
 // =======================================================================================
 void updateSignalLogic(float currentMomentum, const char* alertType) {
     int h = getHour(); int m = getMinute();
+    // Lunch chop window: 12:00–1:30 PM EST — historically low-quality signals
     bool isLunchExit = (h == 12) || (h == 13 && m <= 30);
 
     if (strcmp(alertType, "TREND END") == 0) {
@@ -646,31 +724,33 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
             bzState = BZ_BEAR; bzTimer = millis();
             forceRedraw = true;
         } else if (isLunchExit) {
-            // No position open but still in lunch window — show advisory
+            // No open position but we're in the lunch window — advisory alert only
             drawSignalAlert("EXIT", "LUNCH CHOP ZONE", C_YELLOW);
             bzState = BZ_BEAR; bzTimer = millis();
             forceRedraw = true;
         }
-        currentSignal = IDLE;
+        currentSignal = IDLE;  // clear any pending TRIGGERED state across a trend end
         return;
     }
 
+    // Step 1: BREAK detected — arm the confirmation window
     if (strcmp(alertType, "BULL BREAK") == 0 || strcmp(alertType, "BEAR BREAK") == 0) {
         currentSignal    = TRIGGERED;
         lastTriggerTime  = millis();
     }
 
+    // Step 2: Check for confirmation while window is still open
     if (currentSignal == TRIGGERED && (millis() - lastTriggerTime < CONFIRMATION_WINDOW)) {
         if (strcmp(alertType, "BULL RUSH") == 0 && currentMomentum >= BULL_RUSH_THRESHOLD) {
             triggerBuySignal();
-            currentSignal = IDLE; // prevent stale TRIGGERED from catching a bear event
+            currentSignal = IDLE;  // disarm so a stray BEAR DUMP can't fire a short immediately after
         } else if (strcmp(alertType, "BEAR DUMP") == 0 && currentMomentum <= BEAR_DUMP_THRESHOLD) {
             triggerSellSignal();
             currentSignal = IDLE;
         }
     }
 
-    // Confirmation window expired — clean up
+    // Window expired without confirmation — discard the pending signal
     if (currentSignal == TRIGGERED && (millis() - lastTriggerTime > CONFIRMATION_WINDOW)) {
         currentSignal = IDLE;
     }
@@ -705,12 +785,20 @@ void triggerSellSignal() {
 }
 
 // =======================================================================================
-// AUDIO STATE MACHINE (non-blocking, uses M5.Speaker)
+// AUDIO STATE MACHINE
+// Non-blocking tone sequencer — called every loop() tick.
+// bzState is set by signal events; bzTimer records when the sequence started.
+// Using elapsed time (millis - bzTimer) avoids blocking the main loop with delay().
+//
+// BZ_BULL    → single short high tone (1000Hz, 200ms)
+// BZ_BEAR    → single long low tone  (500Hz, 1000ms)
+// BZ_STUTTER → three rapid mid-pitch beeps (used for RUSH/DUMP momentum surges)
+// All tones respect the isMuted flag — checked once at entry.
 // =======================================================================================
 void updateBuzzer() {
     if (settings.isMuted || bzState == BZ_IDLE) return;
 
-    unsigned long el = millis() - bzTimer;
+    unsigned long el = millis() - bzTimer;  // elapsed ms since tone sequence started
 
     switch (bzState) {
         case BZ_BULL:
@@ -722,7 +810,7 @@ void updateBuzzer() {
             if (el >= (unsigned long)DUR_BEARISH) bzState = BZ_IDLE;
             break;
         case BZ_STUTTER:
-            // Stutter pattern: three short 80ms beeps
+            // Three 80ms beeps with 80ms gaps between them — total ~400ms
             if (el < 80)        M5Cardputer.Speaker.tone(1100, 80);
             else if (el < 160)  M5Cardputer.Speaker.stop();
             else if (el < 240)  M5Cardputer.Speaker.tone(1100, 80);
@@ -1031,23 +1119,31 @@ void drawSignalOverlay(const char* line1, const char* line2, uint16_t colour) {
 
 // =======================================================================================
 // WEB SERVER — JSON API + HTML DASHBOARD
+// Single-threaded, handles one request per loop() tick.
+// Two routes:
+//   GET /data → JSON payload (polled every 3s by the web dashboard JS)
+//   GET /     → full HTML dashboard (with optional command params in the URL)
+//
+// Web commands are embedded as GET params in the root URL, e.g. /?sym=QQQ or /?mute=1.
+// This avoids needing POST/AJAX for simple actions and keeps the HTML minimal.
 // =======================================================================================
 void handleWebTraffic() {
     WiFiClient client = webServer.accept();
     if (!client) return;
 
+    // Wait up to 500ms for the request line — needed on slow connections
     unsigned long t0 = millis();
     while (!client.available() && (millis() - t0) < 500) delay(1);
     if (!client.available()) { client.stop(); return; }
 
     String req = client.readStringUntil('\n');
-    while (client.available()) client.read(); // drain headers
+    while (client.available()) client.read();  // drain remaining headers (we don't need them)
 
-    // Route
+    // Route requests
     if (req.indexOf("GET /data") != -1) {
         serveJSON(client);
     } else {
-        // Parse any commands embedded in the GET URL
+        // Parse any action commands embedded in the URL before serving the page
         bool saveNeeded = false;
 
         if (req.indexOf("sym=SPY") != -1) { strcpy(settings.symbol, "SPY"); applySymbolPreset("SPY"); initialized=false; resetTrades(); saveNeeded=true; forceRedraw=true; }
@@ -1223,11 +1319,15 @@ void serveHTML(WiFiClient& client) {
     client.print("<div class='card'><h2>ABOUT SQUAWK BOX</h2>");
     client.print("<h3>Concept &amp; Creation</h3><p>Designed and built by <strong>Jason Edgar</strong> in Orillia, Ontario.</p>");
     client.print("<p>Running on <strong>M5Stack Cardputer ADV</strong> (ESP32-S3) with direct Finnhub REST polling.</p>");
-    client.print("<h3>Keyboard Shortcuts</h3><p>"
-                 "<b>[M]</b>ute &nbsp;|&nbsp; <b>[B]</b>acklight &nbsp;|&nbsp; "
-                 "<b>[1/2/3]</b> Symbol &nbsp;|&nbsp; <b>[+/-]</b> Chop &nbsp;|&nbsp; "
-                 "<b>[T]</b>est Bull &nbsp;|&nbsp; <b>[Y]</b>est Bear &nbsp;|&nbsp; "
-                 "<b>[W]</b>iFi Setup &nbsp;|&nbsp; <b>[R]</b>eboot</p>");
+    client.print("<h3>Keyboard Shortcuts</h3>"
+                 "<p><b>[M]</b> Mute</p>"
+                 "<p><b>[B]</b> Backlight</p>"
+                 "<p><b>[1/2/3]</b> Symbol (SPY / QQQ / IWM)</p>"
+                 "<p><b>[+/-]</b> Chop Limit</p>"
+                 "<p><b>[T]</b> Test Bull Tone</p>"
+                 "<p><b>[Y]</b> Test Bear Tone</p>"
+                 "<p><b>[W]</b> WiFi Setup</p>"
+                 "<p><b>[R]</b> Reboot</p>");
     client.print("<h3>Signal Logic</h3><ul>"
                  "<li><b style='color:#FFD700'>BUY:</b> Bull Break &rarr; Bull Rush (&ge;0.016%) within 15s</li>"
                  "<li><b style='color:#FFD700'>SELL:</b> Bear Break &rarr; Bear Dump (&le;-0.025%) within 15s</li>"
@@ -1344,6 +1444,15 @@ void serveHTML(WiFiClient& client) {
 
 // =======================================================================================
 // SETUP
+// Boot sequence:
+//  1. Init hardware (display, speaker, keyboard)
+//  2. Show splash screen
+//  3. Load credentials + settings from NVS
+//  4. If no credentials saved → launch captive portal (blocks until saved, then reboots)
+//  5. Attempt WiFi connection — if it fails, launch portal so user can fix credentials
+//  6. Sync time via NTP
+//  7. Start web server
+//  8. Draw main UI
 // =======================================================================================
 void setup() {
     Serial.begin(115200);
@@ -1455,9 +1564,16 @@ void setup() {
 
 // =======================================================================================
 // MAIN LOOP
+// Runs continuously. Order matters:
+//  1. update()       — must be called first every tick to scan the keyboard
+//  2. handleKeyboard — process any key presses
+//  3. handleWebTraffic — serve one pending HTTP request if any
+//  4. updateBuzzer   — advance the non-blocking tone sequencer
+//  5. forceRedraw    — repaint screen if any state has changed
+//  6. Smart poll     — fetch a new price from Finnhub when interval has elapsed
 // =======================================================================================
 void loop() {
-    M5Cardputer.update(); // Required for keyboard scan
+    M5Cardputer.update();  // required every tick — scans keyboard matrix
 
     handleKeyboard();
     handleWebTraffic();
