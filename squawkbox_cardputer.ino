@@ -2,37 +2,36 @@
  * =======================================================================================
  * SQUAWK BOX v9.9 - CARDPUTER ADV EDITION
  * =======================================================================================
- * AUTHOR: Jason Edgar (Orillia, ON)
  * ORIGINAL PLATFORM: Particle Photon 2
  * PORTED TO: M5Stack Cardputer (ESP32-S3, ST7789 135x240 TFT, built-in keyboard/speaker)
  *
  * FIRST TIME SETUP — NO HARDCODED CREDENTIALS NEEDED:
- *  1. Flash this sketch as-is.
- *  2. On first boot, the Cardputer creates a WiFi hotspot: SQUAWKBOX-SETUP
- *  3. Connect your phone/laptop to that network (no password).
- *  4. A setup page opens automatically (or visit 192.168.4.1).
- *  5. Enter your WiFi SSID, password, and Finnhub API key → Save.
- *  6. Device reboots and connects to your network.
- *  7. Press [W] at any time to re-enter setup mode and change credentials.
+ * 1. Flash this sketch as-is.
+ * 2. On first boot, the Cardputer creates a WiFi hotspot: SQUAWKBOX-SETUP
+ * 3. Connect your phone/laptop to that network (no password).
+ * 4. A setup page opens automatically (or visit 192.168.4.1).
+ * 5. Enter your WiFi SSID, password, and Finnhub API key → Save.
+ * 6. Device reboots and connects to your network.
+ * 7. Press [W] at any time to re-enter setup mode and change credentials.
  *
  * KEYBOARD MAP:
- *  [M]  = Toggle Mute
- *  [B]  = Toggle Backlight
- *  [1]  = Switch to SPY
- *  [2]  = Switch to QQQ
- *  [3]  = Switch to IWM
- *  [+]  = Increase Chop Limit by 0.001
- *  [-]  = Decrease Chop Limit by 0.001
- *  [T]  = Test Bull tone
- *  [Y]  = Test Bear tone
- *  [W]  = WiFi setup portal (change credentials)
- *  [R]  = Reboot device
+ * [I]  = Toggle System Info Screen (Shows IP address)
+ * [M]  = Toggle Mute
+ * [B]  = Toggle Backlight
+ * [1]  = Switch to SPY
+ * [2]  = Switch to QQQ
+ * [3]  = Switch to IWM
+ * [+]  = Increase Chop Limit by 0.001
+ * [-]  = Decrease Chop Limit by 0.001
+ * [T]  = Test Bull tone
+ * [Y]  = Test Bear tone
+ * [W]  = WiFi setup portal (change credentials)
  *
  * REQUIRED LIBRARIES (install via Arduino Library Manager):
- *  - M5Cardputer  (M5Stack official)
- *  - M5GFX        (M5Stack official)
- *  - ArduinoJson  (Benoit Blanchon, v7+)
- *  - Preferences  (built-in ESP32 core)
+ * - M5Cardputer  (M5Stack official)
+ * - M5GFX        (M5Stack official)
+ * - ArduinoJson  (Benoit Blanchon, v7+)
+ * - Preferences  (built-in ESP32 core)
  *
  * =======================================================================================
  */
@@ -80,7 +79,7 @@
 struct Credentials {
     char ssid[64];
     char pass[64];
-    char apikey[64];   // Finnhub API key — free tier supports ~60 calls/min
+    char apikey[64]; // Finnhub API key — free tier supports ~60 calls/min
 };
 Credentials creds;
 
@@ -102,7 +101,7 @@ void loadCredentials() {
 // Persist to NVS — survives power loss and OTA flashes
 void saveCredentials() {
     Preferences p;
-    p.begin("wificreds", false);  // false = read-write
+    p.begin("wificreds", false); // false = read-write
     p.putString("ssid",   creds.ssid);
     p.putString("pass",   creds.pass);
     p.putString("apikey", creds.apikey);
@@ -238,7 +237,6 @@ void runPortal() {
     while (true) {
         dnsServer.processNextRequest();
         M5Cardputer.update();
-
         WiFiClient client = portalServer.accept();
         if (client) {
             unsigned long t = millis();
@@ -264,7 +262,7 @@ void runPortal() {
                         servePortalHTML(client, true);
                         client.clear();
                         client.stop();
-
+                        
                         // Show saved confirmation on screen
                         M5Cardputer.Display.fillRect(0, 110, DISP_W, 25, TFT_BLACK);
                         M5Cardputer.Display.setTextColor(C_GREEN);
@@ -333,11 +331,13 @@ Preferences prefs;
 // read in display/web functions — volatile prevents the compiler from caching stale values.
 volatile float emaFast = 0, emaSlow = 0, diff = 0;
 volatile float lastPrice = 0;
-bool initialized   = false;   // false until first valid price is received
-bool forceRedraw   = true;    // set true to trigger a full screen repaint next loop
 
-unsigned long lastPollMs   = 0;   // tracks when we last hit Finnhub
-unsigned long lastWebMs    = 0;   // reserved for future web rate-limiting
+bool initialized    = false;   // false until first valid price is received
+bool forceRedraw    = true;    // set true to trigger a full screen repaint next loop
+bool showInfoScreen = false;   // tracks if the System Info screen is active
+
+unsigned long lastPollMs   = 0; // tracks when we last hit Finnhub
+unsigned long lastWebMs    = 0; // reserved for future web rate-limiting
 
 // --- SIGNAL STATE MACHINE ---
 // IDLE     → waiting for a BREAK event
@@ -345,7 +345,7 @@ unsigned long lastWebMs    = 0;   // reserved for future web rate-limiting
 // (CONFIRMED is reserved but currently unused — signals fire immediately on confirmation)
 enum SignalState { IDLE, TRIGGERED, CONFIRMED };
 SignalState currentSignal  = IDLE;
-unsigned long lastTriggerTime = 0;  // millis() when the last BREAK was detected
+unsigned long lastTriggerTime = 0; // millis() when the last BREAK was detected
 
 // --- PAPER TRADING ---
 // All PnL is in raw price-per-share (no share size), matching the original Photon version.
@@ -370,17 +370,17 @@ Alert alertLog[5];
 // 60 samples × 4px/bar = 240px — exactly fills the display width.
 const int HISTORY_SIZE = 60;
 volatile float velocityHistory[HISTORY_SIZE];
-volatile int   historyHead = 0;  // index of the NEXT write position (oldest data)
+volatile int   historyHead = 0; // index of the NEXT write position (oldest data)
 
 // --- AUDIO STATE MACHINE ---
 // Non-blocking tone sequencer. bzState is set by signal events;
 // updateBuzzer() fires the appropriate tone pattern each loop() tick.
 enum BuzzerState { BZ_IDLE, BZ_BULL, BZ_BEAR, BZ_STUTTER };
 BuzzerState bzState  = BZ_IDLE;
-unsigned long bzTimer = 0;   // millis() when current tone sequence started
+unsigned long bzTimer = 0; // millis() when current tone sequence started
 
-const int DUR_BULLISH = 200;   // ms — short sharp beep for bull events
-const int DUR_BEARISH = 1000;  // ms — longer low tone for bear events
+const int DUR_BULLISH = 200;  // ms — short sharp beep for bull events
+const int DUR_BEARISH = 1000; // ms — longer low tone for bear events
 
 // --- WEB SERVER ---
 WiFiServer webServer(80);
@@ -418,6 +418,7 @@ void triggerBuySignal();
 void triggerSellSignal();
 void logEvent(const char* type, float v);
 void drawFullScreen();
+void drawInfoScreen();
 void drawVelocityZone();
 void drawGraph();
 void drawPriceBar();
@@ -438,8 +439,8 @@ void serveHTML(WiFiClient& client);
 void closePosition() {
     if (currentPos == POS_NONE) return;
     float pnl = 0.0f;
-    if (currentPos == POS_LONG)  pnl = lastPrice - tradeEntryPrice;  // profit if price rose
-    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - lastPrice;  // profit if price fell
+    if (currentPos == POS_LONG)  pnl = lastPrice - tradeEntryPrice; // profit if price rose
+    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - lastPrice; // profit if price fell
     closedPnL += pnl;
     tradeCount++;
     currentPos     = POS_NONE;
@@ -447,13 +448,13 @@ void closePosition() {
 }
 
 void openLong() {
-    if (currentPos == POS_SHORT) closePosition();  // auto-close short before going long
-    if (currentPos == POS_NONE)  { currentPos = POS_LONG;  tradeEntryPrice = lastPrice; }
+    if (currentPos == POS_SHORT) closePosition(); // auto-close short before going long
+    if (currentPos == POS_NONE)  { currentPos = POS_LONG; tradeEntryPrice = lastPrice; }
     // If already LONG, do nothing — don't double-enter
 }
 
 void openShort() {
-    if (currentPos == POS_LONG)  closePosition();  // auto-close long before going short
+    if (currentPos == POS_LONG)  closePosition(); // auto-close long before going short
     if (currentPos == POS_NONE)  { currentPos = POS_SHORT; tradeEntryPrice = lastPrice; }
     // If already SHORT, do nothing
 }
@@ -569,11 +570,13 @@ String getLocalIPString() {
 // =======================================================================================
 unsigned long getSmartInterval() {
     int wd = getWeekday();
-    if (wd == 0 || wd == 6) return 300;  // Saturday(0) or Sunday(6)
+    if (wd == 0 || wd == 6) return 300;                         // Saturday(0) or Sunday(6)
+    
     int h = getHour(); int m = getMinute();
-    if (h < 8 || (h == 8 && m < 30) || h >= 16) return 60;   // outside market hours
-    if ((h == 9 && m >= 30) || h == 10 || h == 15) return 2;  // open and close sprints
+    if (h < 8 || (h == 8 && m < 30) || h >= 16) return 60;      // outside market hours
+    if ((h == 9 && m >= 30) || h == 10 || h == 15) return 2;    // open and close sprints
     if (h == 12) return 10;                                     // lunch chop window
+    
     return 4;                                                   // normal mid-session
 }
 
@@ -595,7 +598,7 @@ void fetchQuote() {
     http.begin(secClient, url);
     http.setTimeout(5000);
     int code = http.GET();
-
+    
     if (code == 200) {
         String payload = http.getString();
         JsonDocument doc;
@@ -638,10 +641,11 @@ void processPrice(float p) {
         return;
     }
 
-    float prevDiff = diff;  // snapshot before updating, used for BREAK/RUSH detection
+    float prevDiff = diff; // snapshot before updating, used for BREAK/RUSH detection
+    
     emaFast = (lastPrice * settings.alphaFast) + (emaFast * (1.0f - settings.alphaFast));
     emaSlow = (lastPrice * settings.alphaSlow) + (emaSlow * (1.0f - settings.alphaSlow));
-
+    
     // Express the EMA gap as a percentage of price for symbol-agnostic comparison
     float rawDiff = emaFast - emaSlow;
     diff = (rawDiff / lastPrice) * 100.0f;
@@ -686,9 +690,11 @@ void processPrice(float p) {
         updateSignalLogic(diff, "TREND END");
     }
 
-    drawVelocityZone();
-    drawGraph();
-    drawPriceBar();
+    if (!showInfoScreen) {
+        drawVelocityZone();
+        drawGraph();
+        drawPriceBar();
+    }
 }
 
 // =======================================================================================
@@ -715,8 +721,10 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
             // Always show an exit alert, not just during lunch
             const char* exitSub = isLunchExit ? "LUNCH CHOP ZONE" : "TREND ENDED";
             uint16_t exitCol = isLunchExit ? C_YELLOW : C_CYAN;
+            
             closePosition();
             drawSignalAlert("EXIT", exitSub, exitCol);
+            
             if (!settings.isMuted) {
                 M5Cardputer.Speaker.tone(800, 150); delay(180);
                 M5Cardputer.Speaker.tone(600, 300);
@@ -729,7 +737,7 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
             bzState = BZ_BEAR; bzTimer = millis();
             forceRedraw = true;
         }
-        currentSignal = IDLE;  // clear any pending TRIGGERED state across a trend end
+        currentSignal = IDLE; // clear any pending TRIGGERED state across a trend end
         return;
     }
 
@@ -761,10 +769,12 @@ void triggerBuySignal() {
     logEvent("BUY SIGNAL", diff);
     char subBuf[20];
     snprintf(subBuf, sizeof(subBuf), "LONG @ $%.2f", lastPrice);
+    
     if (!settings.isMuted) {
         M5Cardputer.Speaker.tone(1200, 150); delay(180);
         M5Cardputer.Speaker.tone(1500, 300);
     }
+    
     drawSignalAlert("BUY", subBuf, C_GREEN);
     currentSignal = IDLE;
     forceRedraw = true;
@@ -775,10 +785,12 @@ void triggerSellSignal() {
     logEvent("SELL SIGNAL", diff);
     char subBuf[20];
     snprintf(subBuf, sizeof(subBuf), "SHORT @ $%.2f", lastPrice);
+    
     if (!settings.isMuted) {
         M5Cardputer.Speaker.tone(600, 150); delay(180);
         M5Cardputer.Speaker.tone(400, 600);
     }
+    
     drawSignalAlert("SELL", subBuf, C_RED);
     currentSignal = IDLE;
     forceRedraw = true;
@@ -797,7 +809,7 @@ void triggerSellSignal() {
 // =======================================================================================
 void updateBuzzer() {
     if (settings.isMuted || bzState == BZ_IDLE) return;
-
+    
     unsigned long el = millis() - bzTimer;  // elapsed ms since tone sequence started
 
     switch (bzState) {
@@ -805,10 +817,12 @@ void updateBuzzer() {
             if (el == 0 || el < 5) M5Cardputer.Speaker.tone(1000, DUR_BULLISH);
             if (el >= (unsigned long)DUR_BULLISH) bzState = BZ_IDLE;
             break;
+            
         case BZ_BEAR:
             if (el == 0 || el < 5) M5Cardputer.Speaker.tone(500, DUR_BEARISH);
             if (el >= (unsigned long)DUR_BEARISH) bzState = BZ_IDLE;
             break;
+            
         case BZ_STUTTER:
             // Three 80ms beeps with 80ms gaps between them — total ~400ms
             if (el < 80)        M5Cardputer.Speaker.tone(1100, 80);
@@ -818,6 +832,7 @@ void updateBuzzer() {
             else if (el < 400)  M5Cardputer.Speaker.tone(1100, 80);
             else                bzState = BZ_IDLE;
             break;
+            
         default: break;
     }
 }
@@ -834,8 +849,13 @@ void handleKeyboard() {
 
     for (auto key : status.word) {
         Serial.printf("[KEY] %c\n", key);
-
+        
         switch (key) {
+            case 'i': case 'I':
+                showInfoScreen = !showInfoScreen;
+                forceRedraw = true;
+                break;
+                
             case 'm': case 'M':
                 settings.isMuted = !settings.isMuted;
                 saveSettings();
@@ -854,7 +874,7 @@ void handleKeyboard() {
                 initialized = false; resetTrades(); saveSettings();
                 forceRedraw = true;
                 break;
-
+                
             case '2':
                 strcpy(settings.symbol, "QQQ");
                 applySymbolPreset("QQQ");
@@ -868,7 +888,7 @@ void handleKeyboard() {
                 initialized = false; resetTrades(); saveSettings();
                 forceRedraw = true;
                 break;
-
+                
             case '+': case '=':
                 settings.chopLimit += 0.001f;
                 saveSettings(); forceRedraw = true;
@@ -893,30 +913,51 @@ void handleKeyboard() {
                 // Re-enter WiFi setup portal to change credentials
                 runPortal(); // blocks until saved, then reboots
                 break;
-
-            case 'r': case 'R':
-                ESP.restart();
-                break;
         }
     }
 }
 
 // =======================================================================================
 // TFT DISPLAY ENGINE
-// 240x135 landscape — no header, data-first layout:
-//
-//  y  0..44  │ VELOCITY ZONE  │ big coloured value + BULL/BEAR/CHOP badge
-//  y 45..45  │ divider
-//  y 46..89  │ GRAPH ZONE     │ 44px tall velocity bar chart
-//  y 90..90  │ divider
-//  y 91..134 │ INFO BAR       │ SYM $price | POS Open Total | time | chop
 // =======================================================================================
+
+void drawInfoScreen() {
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextColor(C_CYAN);
+    M5Cardputer.Display.setCursor(4, 8);
+    M5Cardputer.Display.print("SYSTEM INFO");
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(C_WHITE);
+    
+    M5Cardputer.Display.setCursor(4, 35);
+    M5Cardputer.Display.printf("WiFi RSSI: %d dBm", WiFi.RSSI());
+    
+    M5Cardputer.Display.setCursor(4, 50);
+    M5Cardputer.Display.printf("IP: %s", getLocalIPString().c_str());
+    
+    M5Cardputer.Display.setCursor(4, 65);
+    M5Cardputer.Display.printf("RAM Free:  %d KB", ESP.getFreeHeap() / 1024);
+    
+    M5Cardputer.Display.setCursor(4, 80);
+    M5Cardputer.Display.printf("Uptime:    %lu min", millis() / 60000UL);
+
+    M5Cardputer.Display.setTextColor(C_DKGREY);
+    M5Cardputer.Display.setCursor(4, 118);
+    M5Cardputer.Display.print("Press [ I ] to close");
+}
 
 void drawFullScreen() {
     M5Cardputer.Display.fillScreen(TFT_BLACK);
-    drawVelocityZone();
-    drawGraph();
-    drawPriceBar();
+    if (showInfoScreen) {
+        drawInfoScreen();
+    } else {
+        drawVelocityZone();
+        drawGraph();
+        drawPriceBar();
+    }
     forceRedraw = false;
 }
 
@@ -929,7 +970,7 @@ void drawVelocityZone() {
     const char* trendStr;
     if      (diff >  settings.chopLimit) { trendCol = C_GREEN;  trendStr = "BULL"; }
     else if (diff < -settings.chopLimit) { trendCol = C_RED;    trendStr = "BEAR"; }
-    else                                  { trendCol = C_CYAN;   trendStr = "CHOP"; }
+    else                                 { trendCol = C_CYAN;   trendStr = "CHOP"; }
 
     // Velocity value — size 3 (18px tall), coloured, left-aligned
     M5Cardputer.Display.setTextSize(3);
@@ -938,13 +979,13 @@ void drawVelocityZone() {
     snprintf(vBuf, sizeof(vBuf), "% .4f%%", diff);
     M5Cardputer.Display.setCursor(3, 8);
     M5Cardputer.Display.print(vBuf);
-
+    
     // "VELOCITY" label — tiny grey under the number
     M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setTextColor(C_DKGREY);
     M5Cardputer.Display.setCursor(3, 33);
     M5Cardputer.Display.print("VELOCITY");
-
+    
     // Mute indicator — tiny, next to label
     M5Cardputer.Display.setTextColor(settings.isMuted ? C_RED : C_DKGREY);
     M5Cardputer.Display.setCursor(62, 33);
@@ -977,7 +1018,7 @@ void drawGraph() {
         if (v > maxAbs) maxAbs = v;
     }
     if (maxAbs < 0.001f) maxAbs = 0.001f;
-
+    
     // Dotted chop-limit band
     int chopPx = (int)((settings.chopLimit / maxAbs) * (GH / 2));
     chopPx = max(1, min(chopPx, GH / 2 - 1));
@@ -1002,7 +1043,7 @@ void drawGraph() {
         if      (v >  settings.chopLimit) col = C_GREEN;
         else if (v < -settings.chopLimit) col = C_RED;
         else                              col = C_CYAN;
-
+        
         int xPos = GX + i * barW;
         if (v >= 0) M5Cardputer.Display.fillRect(xPos, zeroY - barH, barW - 1, barH, col);
         else        M5Cardputer.Display.fillRect(xPos, zeroY + 1,    barW - 1, barH, col);
@@ -1015,23 +1056,23 @@ void drawGraph() {
 // Two compact rows: price/symbol top, PnL/time bottom
 void drawPriceBar() {
     M5Cardputer.Display.fillRect(0, 91, DISP_W, 44, TFT_BLACK);
-
+    
     float openPnL = 0.0f;
     if (currentPos == POS_LONG)  openPnL = lastPrice - tradeEntryPrice;
     if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - lastPrice;
 
     const char* posStr;
     uint16_t posCol;
-    if      (currentPos == POS_LONG)  { posStr = "LONG";  posCol = C_GREEN; }
-    else if (currentPos == POS_SHORT) { posStr = "SHORT"; posCol = C_RED;   }
-    else                               { posStr = "FLAT";  posCol = C_DKGREY; }
+    if      (currentPos == POS_LONG)  { posStr = "LONG";  posCol = C_GREEN;  }
+    else if (currentPos == POS_SHORT) { posStr = "SHORT"; posCol = C_RED;    }
+    else                              { posStr = "FLAT";  posCol = C_DKGREY; }
 
     uint16_t opCol = (openPnL  >= 0) ? C_GREEN : C_RED;
     uint16_t cpCol = (closedPnL >= 0) ? C_GREEN : C_RED;
-
+    
     // ── Row 1  y 94: SYM  $price  |  POS  Open PnL
     M5Cardputer.Display.setTextSize(2);
-
+    
     // Symbol — yellow
     M5Cardputer.Display.setTextColor(C_YELLOW);
     M5Cardputer.Display.setCursor(3, 94);
@@ -1056,7 +1097,8 @@ void drawPriceBar() {
     M5Cardputer.Display.setCursor(3, 116);
     M5Cardputer.Display.print("O:");
     M5Cardputer.Display.setTextColor(opCol);
-    char opBuf[10]; snprintf(opBuf, sizeof(opBuf), "%+.2f", openPnL);
+    char opBuf[10];
+    snprintf(opBuf, sizeof(opBuf), "%+.2f", openPnL);
     M5Cardputer.Display.print(opBuf);
 
     // Total PnL
@@ -1064,7 +1106,8 @@ void drawPriceBar() {
     M5Cardputer.Display.setCursor(68, 116);
     M5Cardputer.Display.print("T:");
     M5Cardputer.Display.setTextColor(cpCol);
-    char cpBuf[10]; snprintf(cpBuf, sizeof(cpBuf), "%+.2f", closedPnL);
+    char cpBuf[10];
+    snprintf(cpBuf, sizeof(cpBuf), "%+.2f", closedPnL);
     M5Cardputer.Display.print(cpBuf);
 
     // Trade count
@@ -1084,21 +1127,21 @@ void drawPriceBar() {
 void drawSignalAlert(const char* bigLabel, const char* subLabel, uint16_t bgCol) {
     auto paintFrame = [&]() {
         M5Cardputer.Display.fillScreen(bgCol);
-
+        
         // Giant label (BUY / SELL / EXIT) — black on colour, size 5 = 30px/char
         M5Cardputer.Display.setTextColor(TFT_BLACK);
         M5Cardputer.Display.setTextSize(5);
         int x1 = max(0, (DISP_W - (int)strlen(bigLabel) * 30) / 2);
         M5Cardputer.Display.setCursor(x1, 15);
         M5Cardputer.Display.print(bigLabel);
-
+        
         // Sub-label (entry price / confirmation type) — size 2, centred below
         M5Cardputer.Display.setTextSize(2);
         int x2 = max(0, (DISP_W - (int)strlen(subLabel) * 12) / 2);
         M5Cardputer.Display.setCursor(x2, 95);
         M5Cardputer.Display.print(subLabel);
     };
-
+    
     // 3 flashes: colour → black → colour
     for (int i = 0; i < 3; i++) {
         paintFrame();
@@ -1130,14 +1173,14 @@ void drawSignalOverlay(const char* line1, const char* line2, uint16_t colour) {
 void handleWebTraffic() {
     WiFiClient client = webServer.accept();
     if (!client) return;
-
+    
     // Wait up to 500ms for the request line — needed on slow connections
     unsigned long t0 = millis();
     while (!client.available() && (millis() - t0) < 500) delay(1);
     if (!client.available()) { client.stop(); return; }
 
     String req = client.readStringUntil('\n');
-    while (client.available()) client.read();  // drain remaining headers (we don't need them)
+    while (client.available()) client.read(); // drain remaining headers (we don't need them)
 
     // Route requests
     if (req.indexOf("GET /data") != -1) {
@@ -1145,20 +1188,21 @@ void handleWebTraffic() {
     } else {
         // Parse any action commands embedded in the URL before serving the page
         bool saveNeeded = false;
-
+        
         if (req.indexOf("sym=SPY") != -1) { strcpy(settings.symbol, "SPY"); applySymbolPreset("SPY"); initialized=false; resetTrades(); saveNeeded=true; forceRedraw=true; }
         if (req.indexOf("sym=QQQ") != -1) { strcpy(settings.symbol, "QQQ"); applySymbolPreset("QQQ"); initialized=false; resetTrades(); saveNeeded=true; forceRedraw=true; }
         if (req.indexOf("sym=IWM") != -1) { strcpy(settings.symbol, "IWM"); applySymbolPreset("IWM"); initialized=false; resetTrades(); saveNeeded=true; forceRedraw=true; }
         if (req.indexOf("mute=1") != -1) { settings.isMuted = true;  saveNeeded = true; forceRedraw = true; }
         if (req.indexOf("mute=0") != -1) { settings.isMuted = false; saveNeeded = true; forceRedraw = true; }
+        
         if (req.indexOf("chop=")  != -1) {
             int idx = req.indexOf("chop=") + 5;
             float nc = req.substring(idx).toFloat();
             if (nc > 0) { settings.chopLimit = nc; saveNeeded = true; }
         }
-        if (req.indexOf("test=bull") != -1) { bzState = BZ_BULL;  bzTimer = millis(); logEvent("TEST BULL",  0.050f); }
-        if (req.indexOf("test=bear") != -1) { bzState = BZ_BEAR;  bzTimer = millis(); logEvent("TEST BEAR", -0.050f); }
-        if (req.indexOf("reboot=1")  != -1) { client.stop(); delay(200); ESP.restart(); }
+        
+        if (req.indexOf("test=bull") != -1) { bzState = BZ_BULL; bzTimer = millis(); logEvent("TEST BULL",  0.050f); }
+        if (req.indexOf("test=bear") != -1) { bzState = BZ_BEAR; bzTimer = millis(); logEvent("TEST BEAR", -0.050f); }
 
         if (saveNeeded) saveSettings();
         serveHTML(client);
@@ -1173,7 +1217,7 @@ void serveJSON(WiFiClient& client) {
     float openPnL = 0.0f;
     if (currentPos == POS_LONG)  openPnL = lastPrice - tradeEntryPrice;
     if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - lastPrice;
-
+    
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: application/json");
     client.println("Connection: close");
@@ -1183,27 +1227,28 @@ void serveJSON(WiFiClient& client) {
     client.print(",\"diff\":"); client.print(diff, 4);
     client.print(",\"chop\":"); client.print(settings.chopLimit, 4);
     client.print(",\"sym\":\""); client.print(settings.symbol); client.print("\"");
-
+    
     client.print(",\"pos\":\"");
     if      (currentPos == POS_NONE)  client.print("NONE");
     else if (currentPos == POS_LONG)  client.print("LONG");
-    else                               client.print("SHORT");
+    else                              client.print("SHORT");
     client.print("\"");
-
+    
     client.print(",\"entry\":"); client.print(tradeEntryPrice, 2);
     client.print(",\"openPnl\":"); client.print(openPnL, 2);
     client.print(",\"closedPnl\":"); client.print(closedPnL, 2);
     client.print(",\"trades\":"); client.print(tradeCount);
 
     // Uptime in seconds
-    client.print(",\"uptime\":"); client.print(millis() / 1000UL);
+    client.print(",\"uptime\":");
+    client.print(millis() / 1000UL);
 
     // RSSI
     client.print(",\"rssi\":"); client.print(WiFi.RSSI());
 
     // Free heap
     client.print(",\"heap\":"); client.print(ESP.getFreeHeap() / 1024);
-
+    
     // Alert log
     client.print(",\"alerts\":[");
     bool first = true;
@@ -1235,7 +1280,7 @@ void serveHTML(WiFiClient& client) {
     client.println("Content-Type: text/html");
     client.println("Connection: close");
     client.println();
-
+    
     // Head
     client.print(
         "<!DOCTYPE html><html><head>"
@@ -1255,13 +1300,12 @@ void serveHTML(WiFiClient& client) {
         "input{width:100%;padding:10px;background:#2c2c2c;border:1px solid #444;color:#fff;border-radius:4px;box-sizing:border-box}"
         "</style></head><body><div class='container'>"
     );
-
+    
     // Vitals
     client.print("<div class='card'><h2>SYSTEM VITALS</h2>");
     client.printf("<div class='stat'>WiFi: <span class='val'>%ddBm</span></div>", WiFi.RSSI());
-    client.printf("<div class='stat'>Heap: <span class='val'>%dkB</span></div>", (int)(ESP.getFreeHeap()/1024));
-    client.printf("<div class='stat'>Uptime: <span class='val'>%lum</span></div>", millis()/60000UL);
-    client.printf("<div class='stat'>IP: <span class='val'>%s</span></div>", getLocalIPString().c_str());
+    client.printf("<div class='stat'>RAM: <span class='val'>%d / %d kB free</span></div>", (int)(ESP.getFreeHeap()/1024), (int)(ESP.getHeapSize()/1024));
+    client.printf("<div class='stat'>Uptime: <span class='val'>%lum min</span></div>", millis()/60000UL);
     client.print("</div>");
 
     // Live Monitor
@@ -1282,7 +1326,7 @@ void serveHTML(WiFiClient& client) {
     // Alerts
     client.print("<div class='card'><h2>RECENT ALERTS (LAST 5)</h2>");
     client.print("<div id='alertBox' style='min-height:20px;color:#888;font-size:13px'>Waiting...</div></div>");
-
+    
     // Presets
     String clsSpy = (strcmp(settings.symbol,"SPY")==0) ? "gold" : "";
     String clsQqq = (strcmp(settings.symbol,"QQQ")==0) ? "gold" : "";
@@ -1300,7 +1344,7 @@ void serveHTML(WiFiClient& client) {
                   "<input type='text' name='chop' value='%.3f'>"
                   "<button style='width:auto;background:#00ff88;color:#000'>UPDATE</button>"
                   "</div></form></div>", settings.chopLimit);
-
+                  
     // Admin
     client.print("<div class='card'><h2>ADMIN</h2>");
     client.print("<a href='/?mute=");
@@ -1312,26 +1356,29 @@ void serveHTML(WiFiClient& client) {
                  "<a href='/?test=bull' style='flex:1'><button style='background:#0f8;color:#000'>TEST BULL</button></a>"
                  "<a href='/?test=bear' style='flex:1'><button style='background:#f44'>TEST BEAR</button></a>"
                  "</div>"
-                 "<a href='/?reboot=1'><button style='background:#555;margin-top:10px'>REBOOT DEVICE</button></a>"
                  "</div>");
 
     // About
     client.print("<div class='card'><h2>ABOUT SQUAWK BOX</h2>");
-    client.print("<h3>Concept &amp; Creation</h3><p>Designed and built by <strong>Jason Edgar</strong> in Orillia, Ontario.</p>");
     client.print("<p>Running on <strong>M5Stack Cardputer ADV</strong> (ESP32-S3) with direct Finnhub REST polling.</p>");
+    
     client.print("<h3>Keyboard Shortcuts</h3>"
-                 "<p><b>[M]</b> Mute</p>"
-                 "<p><b>[B]</b> Backlight</p>"
-                 "<p><b>[1/2/3]</b> Symbol (SPY / QQQ / IWM)</p>"
-                 "<p><b>[+/-]</b> Chop Limit</p>"
-                 "<p><b>[T]</b> Test Bull Tone</p>"
-                 "<p><b>[Y]</b> Test Bear Tone</p>"
-                 "<p><b>[W]</b> WiFi Setup</p>"
-                 "<p><b>[R]</b> Reboot</p>");
+                 "<ul style='list-style-type:none;padding-left:0;margin-top:5px;line-height:1.6'>"
+                 "<li><b>[ I ]</b> Toggle System Info</li>"
+                 "<li><b>[ M ]</b> Toggle Mute</li>"
+                 "<li><b>[ B ]</b> Toggle Backlight</li>"
+                 "<li><b>[ 1 / 2 / 3 ]</b> Symbol (SPY / QQQ / IWM)</li>"
+                 "<li><b>[ + / - ]</b> Adjust Chop Limit</li>"
+                 "<li><b>[ T / Y ]</b> Test Bull / Bear Tones</li>"
+                 "</ul>"
+                 "<p style='margin-top:12px;font-size:13px'>"
+                 "<b>WiFi Setup:</b> On first run or hold <b>[W]</b> while powering on to enter setup mode.</p>");
+
     client.print("<h3>Signal Logic</h3><ul>"
-                 "<li><b style='color:#FFD700'>BUY:</b> Bull Break &rarr; Bull Rush (&ge;0.016%) within 15s</li>"
-                 "<li><b style='color:#FFD700'>SELL:</b> Bear Break &rarr; Bear Dump (&le;-0.025%) within 15s</li>"
+                 "<li><b style='color:#0f8'>BUY:</b> Bull Break &rarr; Bull Rush (&ge;0.016%) within 15s</li>"
+                 "<li><b style='color:#f44'>SELL:</b> Bear Break &rarr; Bear Dump (&le;-0.025%) within 15s</li>"
                  "<li><b style='color:#FFD700'>LUNCH EXIT:</b> Trend End between 12:00&ndash;1:30 PM EST</li></ul>");
+                 
     client.print("<h3>&#9888; Disclaimer</h3>"
                  "<p style='color:#f44;font-size:12px;border:1px solid #f44;padding:10px;border-radius:6px'>"
                  "<strong>FOR EDUCATIONAL AND ENTERTAINMENT PURPOSES ONLY.</strong> "
@@ -1342,10 +1389,8 @@ void serveHTML(WiFiClient& client) {
                  "Never trade real money based solely on this tool. "
                  "Consult a licensed financial advisor before making any investment decisions."
                  "</p></div>");
-
-    client.print("<div style='text-align:center;color:#555;font-size:11px;padding:10px'>SQUAWK BOX v9.3 CARDPUTER &nbsp;|&nbsp; ");
-    client.print(getLocalIPString());
-    client.print("</div></div>");
+                 
+    client.print("<div style='text-align:center;color:#555;font-size:11px;padding:10px'>SQUAWK BOX v9.3 CARDPUTER</div></div>");
 
     // JavaScript — auto-refresh every 3s
     client.printf(
@@ -1460,30 +1505,34 @@ void setup() {
     // Init M5Cardputer (display, speaker, keyboard)
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
-    M5Cardputer.Display.setRotation(1);           // Landscape: 240 wide x 135 tall
+    M5Cardputer.Display.setRotation(1);            // Landscape: 240 wide x 135 tall
     M5Cardputer.Display.setTextFont(0);            // Built-in 6x8 pixel font
     M5Cardputer.Display.setBrightness(200);        // Brighter for readability
     M5Cardputer.Display.fillScreen(TFT_BLACK);     // Force true black first
 
     // Splash — dark theme matching web console
     M5Cardputer.Display.fillScreen(TFT_BLACK);
+    
     // Header bar
     M5Cardputer.Display.fillRect(0, 0, DISP_W, 20, C_CARD);
     M5Cardputer.Display.setTextColor(C_GREEN);
     M5Cardputer.Display.setTextSize(2);
     M5Cardputer.Display.setCursor(4, 3);
     M5Cardputer.Display.print("SQUAWK BOX v9.3");
+    
     // Subtitle
     M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setTextColor(C_GREY);
     M5Cardputer.Display.setCursor(4, 30);
     M5Cardputer.Display.print("CARDPUTER ADV EDITION");
+    
     M5Cardputer.Display.setCursor(4, 45);
     M5Cardputer.Display.setTextColor(C_YELLOW);
     M5Cardputer.Display.print("Connecting to WiFi...");
 
     // Load credentials from NVS
     loadCredentials();
+    
     // Load trading/display settings from NVS
     loadSettings();
 
@@ -1504,6 +1553,7 @@ void setup() {
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(creds.ssid, creds.pass);
+    
     int tries = 0;
     while (WiFi.status() != WL_CONNECTED && tries < 40) {
         delay(500);
@@ -1514,25 +1564,30 @@ void setup() {
     if (WiFi.status() != WL_CONNECTED) {
         // WiFi failed — show error then launch portal so user can fix credentials
         M5Cardputer.Display.fillScreen(TFT_BLACK);
+        
         M5Cardputer.Display.setTextSize(2);
         M5Cardputer.Display.setTextColor(C_RED);
         M5Cardputer.Display.setCursor(4, 10);
         M5Cardputer.Display.print("WiFi FAILED");
+        
         M5Cardputer.Display.setTextSize(1);
         M5Cardputer.Display.setTextColor(C_WHITE);
         M5Cardputer.Display.setCursor(4, 40);
         M5Cardputer.Display.print("Could not connect to:");
+        
         M5Cardputer.Display.setTextColor(C_YELLOW);
         M5Cardputer.Display.setCursor(4, 52);
         M5Cardputer.Display.print(creds.ssid);
+        
         M5Cardputer.Display.setTextColor(C_GREY);
         M5Cardputer.Display.setCursor(4, 72);
         M5Cardputer.Display.print("Launching setup in 3s...");
+        
         delay(3000);
         runPortal(); // never returns
     } else {
         Serial.printf("\nWiFi connected: %s\n", WiFi.localIP().toString().c_str());
-
+        
         // NTP sync
         configTzTime(TZ_INFO, NTP_SERVER);
         struct tm ti; int ntpTries = 0;
@@ -1554,7 +1609,7 @@ void setup() {
     // Start web server
     webServer.begin();
     Serial.println("[Web] Server started on port 80");
-
+    
     delay(2500); // Hold splash
 
     // Clear and draw main UI
@@ -1573,12 +1628,12 @@ void setup() {
 //  6. Smart poll     — fetch a new price from Finnhub when interval has elapsed
 // =======================================================================================
 void loop() {
-    M5Cardputer.update();  // required every tick — scans keyboard matrix
+    M5Cardputer.update(); // required every tick — scans keyboard matrix
 
     handleKeyboard();
     handleWebTraffic();
     updateBuzzer();
-
+    
     // Redraw full screen if flagged
     if (forceRedraw) {
         drawFullScreen();
