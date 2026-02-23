@@ -317,6 +317,7 @@ struct Config {
     float chopLimit;
     bool  isMuted;
     bool  backlightOn;
+    uint8_t volume;
     char  symbol[8];
 };
 Config settings;
@@ -474,22 +475,24 @@ void resetTrades() {
 void loadSettings() {
     prefs.begin("squawk", false);
     uint8_t ver = prefs.getUChar("ver", 0);
-    if (ver != 19) {
+    if (ver != 20) { // <--- Bumped to 20 for new volume schema
         // First boot or schema change — initialise with sensible defaults
         strcpy(settings.symbol, "SPY");
         applySymbolPreset("SPY");
-        settings.isMuted    = false;
+        settings.isMuted     = false;
         settings.backlightOn = true;
+        settings.volume      = 128; // <--- Default 50% volume
         saveSettings();
-        prefs.putUChar("ver", 19);
+        prefs.putUChar("ver", 20);
     } else {
         settings.alphaFast   = prefs.getFloat("aFast",  P_SPY_FAST);
         settings.alphaSlow   = prefs.getFloat("aSlow",  P_SPY_SLOW);
         settings.chopLimit   = prefs.getFloat("chop",   P_SPY_CHOP);
         settings.isMuted     = prefs.getBool ("muted",  false);
         settings.backlightOn = prefs.getBool ("bl",     true);
+        settings.volume      = prefs.getUChar("vol",    128); // Load volume
         prefs.getString("sym", settings.symbol, sizeof(settings.symbol));
-        if (strlen(settings.symbol) == 0) strcpy(settings.symbol, "SPY");  // safety fallback
+        if (strlen(settings.symbol) == 0) strcpy(settings.symbol, "SPY");
     }
     prefs.end();
 }
@@ -501,8 +504,9 @@ void saveSettings() {
     prefs.putFloat("chop",  settings.chopLimit);
     prefs.putBool ("muted", settings.isMuted);
     prefs.putBool ("bl",    settings.backlightOn);
+    prefs.putUChar("vol",   settings.volume); // Save volume
     prefs.putString("sym",  settings.symbol);
-    prefs.putUChar("ver",   19);
+    prefs.putUChar("ver",   20);
     prefs.end();
 }
 
@@ -899,6 +903,22 @@ void handleKeyboard() {
                 saveSettings(); forceRedraw = true;
                 break;
 
+            case '.': case '>':
+                if (settings.volume >= 16) settings.volume -= 16;
+                else settings.volume = 0;
+                M5Cardputer.Speaker.setVolume(settings.volume);
+                if (!settings.isMuted) M5Cardputer.Speaker.tone(1000, 50);
+                saveSettings();
+                break;
+                
+            case ';': case ':':
+                if (settings.volume <= 239) settings.volume += 16;
+                else settings.volume = 255;
+                M5Cardputer.Speaker.setVolume(settings.volume);
+                if (!settings.isMuted) M5Cardputer.Speaker.tone(1000, 50);
+                saveSettings();
+                break;
+
             case 't': case 'T':
                 logEvent("TEST BULL", 0.050f);
                 bzState = BZ_BULL; bzTimer = millis();
@@ -1200,7 +1220,18 @@ void handleWebTraffic() {
             float nc = req.substring(idx).toFloat();
             if (nc > 0) { settings.chopLimit = nc; saveNeeded = true; }
         }
-        
+        if (req.indexOf("vol=up") != -1) { 
+            if (settings.volume <= 239) settings.volume += 16; else settings.volume = 255; 
+            M5Cardputer.Speaker.setVolume(settings.volume);
+            if (!settings.isMuted) M5Cardputer.Speaker.tone(1000, 50);
+            saveNeeded = true; 
+        }
+        if (req.indexOf("vol=dn") != -1) { 
+            if (settings.volume >= 16) settings.volume -= 16; else settings.volume = 0; 
+            M5Cardputer.Speaker.setVolume(settings.volume);
+            if (!settings.isMuted) M5Cardputer.Speaker.tone(1000, 50);
+            saveNeeded = true; 
+        }
         if (req.indexOf("test=bull") != -1) { bzState = BZ_BULL; bzTimer = millis(); logEvent("TEST BULL",  0.050f); }
         if (req.indexOf("test=bear") != -1) { bzState = BZ_BEAR; bzTimer = millis(); logEvent("TEST BEAR", -0.050f); }
 
@@ -1345,8 +1376,17 @@ void serveHTML(WiFiClient& client) {
                   "<button style='width:auto;background:#00ff88;color:#000'>UPDATE</button>"
                   "</div></form></div>", settings.chopLimit);
                   
-    // Admin
+// Admin
     client.print("<div class='card'><h2>ADMIN</h2>");
+    
+    // New Volume Control Row
+    client.print("<div style='display:flex;gap:10px;margin-bottom:10px'>");
+    client.print("<a href='/?vol=dn' style='flex:1'><button style='background:#444'>VOL -</button></a>");
+    client.printf("<div style='flex:1;text-align:center;line-height:40px;color:#00ff88;font-weight:bold'>VOL: %d%%</div>", (int)((settings.volume/255.0)*100));
+    client.print("<a href='/?vol=up' style='flex:1'><button style='background:#444'>VOL +</button></a>");
+    client.print("</div>");
+    
+    // Existing Mute and Test buttons
     client.print("<a href='/?mute=");
     client.print(settings.isMuted ? "0" : "1");
     client.print("'><button>");
@@ -1367,6 +1407,7 @@ void serveHTML(WiFiClient& client) {
                  "<li><b>[ I ]</b> Toggle System Info</li>"
                  "<li><b>[ M ]</b> Toggle Mute</li>"
                  "<li><b>[ B ]</b> Toggle Backlight</li>"
+                 "<li><b>[ . / ; ]</b> Volume Down / Up</li>"
                  "<li><b>[ 1 / 2 / 3 ]</b> Symbol (SPY / QQQ / IWM)</li>"
                  "<li><b>[ + / - ]</b> Adjust Chop Limit</li>"
                  "<li><b>[ T / Y ]</b> Test Bull / Bear Tones</li>"
@@ -1535,6 +1576,7 @@ void setup() {
     
     // Load trading/display settings from NVS
     loadSettings();
+    M5Cardputer.Speaker.setVolume(settings.volume);
 
     // If no credentials saved, or [W] held at boot → run setup portal
     // (Portal blocks until saved, then reboots)
