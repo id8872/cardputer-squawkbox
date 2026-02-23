@@ -307,8 +307,6 @@ const float P_IWM_FAST = 0.28f; const float P_IWM_SLOW = 0.14f; const float P_IW
 // CONFIRMATION_WINDOW: how long (ms) we wait for the confirmation after a BREAK.
 //   If confirmation doesn't arrive within 15s, the pending signal is discarded.
 const unsigned long CONFIRMATION_WINDOW = 15000UL;
-const float BULL_RUSH_THRESHOLD =  0.016f;
-const float BEAR_DUMP_THRESHOLD = -0.025f;
 
 // =======================================================================================
 // PERSISTENT CONFIG (NVS via Preferences)
@@ -721,10 +719,8 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
             // Always show an exit alert, not just during lunch
             const char* exitSub = isLunchExit ? "LUNCH CHOP ZONE" : "TREND ENDED";
             uint16_t exitCol = isLunchExit ? C_YELLOW : C_CYAN;
-            
             closePosition();
             drawSignalAlert("EXIT", exitSub, exitCol);
-            
             if (!settings.isMuted) {
                 M5Cardputer.Speaker.tone(800, 150); delay(180);
                 M5Cardputer.Speaker.tone(600, 300);
@@ -747,19 +743,23 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
         lastTriggerTime  = millis();
     }
 
+    // Calculate a dynamic window based on current polling rate (2 polls + 2 seconds grace)
+    unsigned long dynamicWindow = (getSmartInterval() * 1000UL) * 2 + 2000UL;
+
     // Step 2: Check for confirmation while window is still open
-    if (currentSignal == TRIGGERED && (millis() - lastTriggerTime < CONFIRMATION_WINDOW)) {
-        if (strcmp(alertType, "BULL RUSH") == 0 && currentMomentum >= BULL_RUSH_THRESHOLD) {
+    if (currentSignal == TRIGGERED && (millis() - lastTriggerTime <= dynamicWindow)) {
+        // Trust the 20% acceleration logic from processPrice() rather than hardcoded floats
+        if (strcmp(alertType, "BULL RUSH") == 0) {
             triggerBuySignal();
             currentSignal = IDLE;  // disarm so a stray BEAR DUMP can't fire a short immediately after
-        } else if (strcmp(alertType, "BEAR DUMP") == 0 && currentMomentum <= BEAR_DUMP_THRESHOLD) {
+        } else if (strcmp(alertType, "BEAR DUMP") == 0) {
             triggerSellSignal();
             currentSignal = IDLE;
         }
     }
 
     // Window expired without confirmation — discard the pending signal
-    if (currentSignal == TRIGGERED && (millis() - lastTriggerTime > CONFIRMATION_WINDOW)) {
+    if (currentSignal == TRIGGERED && (millis() - lastTriggerTime > dynamicWindow)) {
         currentSignal = IDLE;
     }
 }
