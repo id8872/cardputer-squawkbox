@@ -63,6 +63,8 @@ Install via Arduino Library Manager:
 |---|---|
 | `M` | Toggle mute |
 | `B` | Toggle backlight |
+| `;` | Increase volume |
+| `.` | Decrease volume |
 | `1` | Switch to SPY |
 | `2` | Switch to QQQ |
 | `3` | Switch to IWM |
