@@ -108,6 +108,32 @@ If the confirmation (RUSH or DUMP) doesn't arrive within 15 seconds of the BREAK
 
 ---
 
+## 🕐 Market Hours & EMA Warmup
+
+**Paper trading and BUY/SELL signals only fire during market hours: 8:00 AM – 4:00 PM EST, Monday–Friday.** This covers the pre-market session from 8:00 AM where Finnhub provides live prices and meaningful momentum can develop ahead of the 9:30 open. Outside these hours, Finnhub returns stale prices and signals would be meaningless. TREND END (position close) is still allowed at any time to cleanly exit an open position.
+
+**EMA warmup:** The EMAs need several polls to settle before signals are reliable. The effective lookback period for each symbol is approximately:
+
+| Symbol | Fast EMA | Slow EMA |
+|---|---|---|
+| SPY | ~8 polls | ~18 polls |
+| QQQ | ~7 polls | ~16 polls |
+| IWM | ~6 polls | ~13 polls |
+
+Because poll interval varies with time of day, the real-time warmup window is:
+
+| Session | Poll interval | Slow EMA settles in |
+|---|---|---|
+| Open / Close (9:30–10:00, 15:00–16:00) | 2s | ~36 seconds |
+| Pre-market (8:00–9:30) / Normal mid-session | 4s | ~72 seconds |
+| Lunch (12:00–13:00) | 10s | ~3 minutes |
+| Off-hours (before 8:00 AM / after 4:00 PM) | 60s | ~18 minutes |
+| Weekend | 300s | ~1.5 hours |
+
+Signals are active from 8:00 AM. The EMA warms at 4s intervals during pre-market, so by the time the 9:30 open sprint kicks in the EMAs should be reasonably settled.
+
+---
+
 ## 🔒 API Key & Security
 
 Your WiFi password and Finnhub API key are stored in ESP32 NVS (non-volatile storage) flash. This storage is **not encrypted by default**.
