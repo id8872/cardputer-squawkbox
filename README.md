@@ -6,6 +6,10 @@ Originally built for the Particle Photon 2, this edition leverages the Cardputer
 
 Whether you're tracking Bull Rushes, Bear Dumps, or navigating Chop Zones, Squawk Box acts as your automated co-pilot — complete with a built-in paper trading engine and a local web dashboard accessible from any device on your network.
 
+ES (E-mini S&P 500) moves identically to SPY.
+NQ (E-mini Nasdaq 100) moves identically to QQQ.
+RTY (E-mini Russell 2000) moves identically to IWM.
+
 ---
 
 ## ✨ Features
