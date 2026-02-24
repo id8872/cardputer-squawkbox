@@ -372,15 +372,15 @@ void loadSettings();
 void saveSettings();
 void applySymbolPreset(const char* sym);
 void resetTrades();
-void closePosition();
-void openLong();
-void openShort();
+void closePosition(float exitPrice); // UPDATED FOR SPREAD
+void openLong(float entryPrice);     // UPDATED FOR SPREAD
+void openShort(float entryPrice);    // UPDATED FOR SPREAD
 void fetchQuote();
 void handleWebTraffic();
 void handleKeyboard();
-void updateSignalLogic(float momentum, const char* alertType);
-void triggerBuySignal();
-void triggerSellSignal();
+void updateSignalLogic(float momentum, const char* alertType, float askPrice, float bidPrice); // UPDATED FOR SPREAD
+void triggerBuySignal(float entryPrice);  // UPDATED FOR SPREAD
+void triggerSellSignal(float entryPrice); // UPDATED FOR SPREAD
 void logEvent(const char* type, float v);
 void drawFullScreen();
 void drawInfoScreen();
@@ -398,14 +398,14 @@ void serveHTML(WiFiClient& client);
 bool isMarketHours();
 
 // =======================================================================================
-// PAPER TRADING ENGINE
+// PAPER TRADING ENGINE (UPDATED TO USE SPREAD)
 // =======================================================================================
-void closePosition() {
+void closePosition(float exitPrice) {
     if (currentPos == POS_NONE) return;
 
     float pnl = 0.0f;
-    if (currentPos == POS_LONG)  pnl = lastPrice - tradeEntryPrice;
-    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - lastPrice;
+    if (currentPos == POS_LONG)  pnl = exitPrice - tradeEntryPrice;
+    if (currentPos == POS_SHORT) pnl = tradeEntryPrice - exitPrice;
     
     // Shift old trades down
     for (int i = 4; i > 0; i--) tradeLog[i] = tradeLog[i-1];
@@ -417,7 +417,7 @@ void closePosition() {
     strcpy(tradeLog[0].type, (currentPos == POS_LONG) ? "LONG" : "SHORT");
     
     tradeLog[0].entryPrice = tradeEntryPrice;
-    tradeLog[0].exitPrice = lastPrice;
+    tradeLog[0].exitPrice = exitPrice; // Uses precise spread exit
     tradeLog[0].pnl = pnl;
 
     closedPnL += pnl;
@@ -426,21 +426,21 @@ void closePosition() {
     tradeEntryPrice = 0.0f;
 }
 
-void openLong() {
-    if (currentPos == POS_SHORT) closePosition();
+void openLong(float entryPrice) {
+    if (currentPos == POS_SHORT) closePosition(entryPrice); // Cover short at the Ask price
     if (currentPos == POS_NONE) { 
         currentPos = POS_LONG; 
-        tradeEntryPrice = lastPrice;
+        tradeEntryPrice = entryPrice; // Buy at the Ask price
         String ts = getTimeString();
         strncpy(currentEntryTime, ts.c_str(), 8); currentEntryTime[8] = '\0';
     }
 }
 
-void openShort() {
-    if (currentPos == POS_LONG) closePosition();
+void openShort(float entryPrice) {
+    if (currentPos == POS_LONG) closePosition(entryPrice); // Sell long at the Bid price
     if (currentPos == POS_NONE) { 
         currentPos = POS_SHORT; 
-        tradeEntryPrice = lastPrice;
+        tradeEntryPrice = entryPrice; // Short at the Bid price
         String ts = getTimeString();
         strncpy(currentEntryTime, ts.c_str(), 8); currentEntryTime[8] = '\0';
     }
@@ -616,6 +616,11 @@ void fetchQuote() {
 void processPrice(float p) {
     lastPrice = p;
 
+    // --- NEW: Calculate Simulated Bid/Ask Spread ---
+    float askPrice = p + 0.02f; // Cost to Buy / Cover
+    float bidPrice = p - 0.02f; // Cost to Sell / Short
+    // -----------------------------------------------
+
     if (!initialized) {
         emaFast = lastPrice;
         emaSlow = lastPrice;
@@ -626,6 +631,8 @@ void processPrice(float p) {
     }
 
     float prevDiff = diff;
+    
+    // Momentum logic uses raw price
     emaFast = (lastPrice * settings.alphaFast) + (emaFast * (1.0f - settings.alphaFast));
     emaSlow = (lastPrice * settings.alphaSlow) + (emaSlow * (1.0f - settings.alphaSlow));
     
@@ -641,31 +648,31 @@ void processPrice(float p) {
                 bzState = BZ_BULL;
                 bzTimer = millis();
                 logEvent("BULL BREAK", diff);
-                updateSignalLogic(diff, "BULL BREAK");
+                updateSignalLogic(diff, "BULL BREAK", askPrice, bidPrice); // PASSING SPREAD
             } else if (diff > (prevDiff * 1.20f)) {
                 bzState = BZ_STUTTER;
                 bzTimer = millis();
                 logEvent("BULL RUSH", diff);
-                updateSignalLogic(diff, "BULL RUSH");
+                updateSignalLogic(diff, "BULL RUSH", askPrice, bidPrice); // PASSING SPREAD
             }
         } else {
             if (prevDiff >= -settings.chopLimit) {
                 bzState = BZ_BEAR;
                 bzTimer = millis();
                 logEvent("BEAR BREAK", diff);
-                updateSignalLogic(diff, "BEAR BREAK");
+                updateSignalLogic(diff, "BEAR BREAK", askPrice, bidPrice); // PASSING SPREAD
             } else if (diff < (prevDiff * 1.20f)) {
                 bzState = BZ_STUTTER;
                 bzTimer = millis();
                 logEvent("BEAR DUMP", diff);
-                updateSignalLogic(diff, "BEAR DUMP");
+                updateSignalLogic(diff, "BEAR DUMP", askPrice, bidPrice); // PASSING SPREAD
             }
         }
     } else if (fabs(prevDiff) > settings.chopLimit) {
         bzState = BZ_BULL;
         bzTimer = millis();  
         logEvent("TREND END", diff);
-        updateSignalLogic(diff, "TREND END");
+        updateSignalLogic(diff, "TREND END", askPrice, bidPrice); // PASSING SPREAD
     }
 
     if (!showInfoScreen) {
@@ -678,7 +685,7 @@ void processPrice(float p) {
 // =======================================================================================
 // CONFLUENCE SIGNAL ENGINE
 // =======================================================================================
-void updateSignalLogic(float currentMomentum, const char* alertType) {
+void updateSignalLogic(float currentMomentum, const char* alertType, float askPrice, float bidPrice) {
     int h = getHour();
     int m = getMinute();
     bool isLunchExit = (h == 12) || (h == 13 && m <= 30);
@@ -689,7 +696,10 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
             const char* exitSub = isLunchExit ? "LUNCH CHOP ZONE" : "TREND ENDED";
             uint16_t exitCol = isLunchExit ? C_YELLOW : C_CYAN;
             
-            closePosition();
+            // --- NEW: Exit at realistic spread price ---
+            float exitPrice = (currentPos == POS_LONG) ? bidPrice : askPrice;
+            closePosition(exitPrice);
+            
             drawSignalAlert("EXIT", exitSub, exitCol); // Draw immediately
             
             if (!settings.isMuted) {
@@ -729,10 +739,10 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
     
     if (currentSignal == TRIGGERED && (millis() - lastTriggerTime <= dynamicWindow)) {
         if (strcmp(alertType, "BULL RUSH") == 0) {
-            triggerBuySignal();
+            triggerBuySignal(askPrice);  // Pass Ask
             currentSignal = IDLE;  
         } else if (strcmp(alertType, "BEAR DUMP") == 0) {
-            triggerSellSignal();
+            triggerSellSignal(bidPrice); // Pass Bid
             currentSignal = IDLE;
         }
     }
@@ -742,11 +752,11 @@ void updateSignalLogic(float currentMomentum, const char* alertType) {
     }
 }
 
-void triggerBuySignal() {
-    openLong();
+void triggerBuySignal(float entryPrice) {
+    openLong(entryPrice);
     logEvent("BUY SIGNAL", diff);
     char subBuf[20];
-    snprintf(subBuf, sizeof(subBuf), "LONG @ $%.2f", lastPrice);
+    snprintf(subBuf, sizeof(subBuf), "LONG @ $%.2f", entryPrice);
 
     // 1. Draw the screen instantly
     drawSignalAlert("BUY", subBuf, C_GREEN);
@@ -764,11 +774,11 @@ void triggerBuySignal() {
     forceRedraw = true;
 }
 
-void triggerSellSignal() {
-    openShort();
+void triggerSellSignal(float entryPrice) {
+    openShort(entryPrice);
     logEvent("SELL SIGNAL", diff);
     char subBuf[20];
-    snprintf(subBuf, sizeof(subBuf), "SHORT @ $%.2f", lastPrice);
+    snprintf(subBuf, sizeof(subBuf), "SHORT @ $%.2f", entryPrice);
 
     // 1. Draw the screen instantly
     drawSignalAlert("SELL", subBuf, C_RED);
@@ -1056,9 +1066,12 @@ void drawGraph() {
 void drawPriceBar() {
     M5Cardputer.Display.fillRect(0, 91, DISP_W, 44, TFT_BLACK);
 
+    // --- NEW: Accurate Open PnL Calculation ---
+    // Instantly reflects the negative cost of crossing the spread
     float openPnL = 0.0f;
-    if (currentPos == POS_LONG)  openPnL = lastPrice - tradeEntryPrice;
-    if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - lastPrice;
+    if (currentPos == POS_LONG)  openPnL = (lastPrice - 0.02f) - tradeEntryPrice;
+    if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - (lastPrice + 0.02f);
+    // ------------------------------------------
 
     const char* posStr;
     uint16_t posCol;
@@ -1195,8 +1208,8 @@ void handleWebTraffic() {
 
 void serveJSON(WiFiClient& client) {
     float openPnL = 0.0f;
-    if (currentPos == POS_LONG)  openPnL = lastPrice - tradeEntryPrice;
-    if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - lastPrice;
+    if (currentPos == POS_LONG)  openPnL = (lastPrice - 0.02f) - tradeEntryPrice;
+    if (currentPos == POS_SHORT) openPnL = tradeEntryPrice - (lastPrice + 0.02f);
 
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: application/json");
