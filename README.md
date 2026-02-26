@@ -1,4 +1,4 @@
-# 📈 Squawk Box v9.9 — M5Stack Cardputer Edition
+# 📈 Squawk Box v10 — M5Stack Cardputer Edition
 
 **Squawk Box** is a portable, algorithmic stock market momentum tracker designed for the [M5Stack Cardputer](https://m5stack.com/products/m5stack-cardputer).
 
