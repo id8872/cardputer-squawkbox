@@ -2,13 +2,14 @@
 
 **Squawk Box** is a portable, algorithmic stock market momentum tracker designed for the [M5Stack Cardputer](https://m5stack.com/products/m5stack-cardputer).
 
-Originally built for the Particle Photon 2, this edition leverages the Cardputer's ESP32-S3, built-in TFT display, keyboard, and speaker to create a completely standalone trading companion. It directly polls the [Finnhub REST API](https://finnhub.io/) to track live price action for major ETFs (SPY, QQQ, IWM), calculating dual-EMA momentum velocity to generate real-time audible and visual trading signals.
+Originally built for the Particle Photon 2, this edition leverages the Cardputer's ESP32-S3, built-in TFT display, keyboard, and speaker to create a completely standalone trading companion. It directly polls the [Finnhub REST API](https://finnhub.io/) to track live price action for major ETFs (SPY, QQQ, IWM, DIA), calculating dual-EMA momentum velocity to generate real-time audible and visual trading signals.
 
 Whether you're tracking Bull Rushes, Bear Dumps, or navigating Chop Zones, Squawk Box acts as your automated co-pilot — complete with a built-in paper trading engine and a local web dashboard accessible from any device on your network.
 
 ES (E-mini S&P 500) moves identically to SPY.
 NQ (E-mini Nasdaq 100) moves identically to QQQ.
 RTY (E-mini Russell 2000) moves identically to IWM.
+YM (E-mini Dow) moves identically to DIA.
 
 ---
 
@@ -72,6 +73,7 @@ Install via Arduino Library Manager:
 | `1` | Switch to SPY |
 | `2` | Switch to QQQ |
 | `3` | Switch to IWM |
+| `4` | Switch to DIA |
 | `+` | Increase chop limit by 0.001 |
 | `-` | Decrease chop limit by 0.001 |
 | `T` | Test bull tone |
@@ -104,9 +106,9 @@ Squawk Box uses a **two-step confluence model** to reduce false signals:
 | Step | Event | Meaning |
 |---|---|---|
 | 1 | **BULL BREAK** | Velocity crosses above the chop limit — trend starting upward |
-| 2 | **BULL RUSH** | Velocity accelerates ≥ 0.016% within 15s of the BREAK — **BUY signal fires** |
+| 2 | **BULL RUSH** | Velocity accelerates by &ge; 20% within 15s of the BREAK — **BUY signal fires** |
 | 1 | **BEAR BREAK** | Velocity crosses below the chop limit — trend starting downward |
-| 2 | **BEAR DUMP** | Velocity drops ≤ -0.025% within 15s of the BREAK — **SELL signal fires** |
+| 2 | **BEAR DUMP** | Velocity accelerates by &ge; 20% downwards within 15s of the BREAK — **SELL signal fires** |
 | — | **TREND END** | Velocity returns inside the chop band — **position closed** |
 
 If the confirmation (RUSH or DUMP) doesn't arrive within 15 seconds of the BREAK, the pending signal is discarded.
@@ -126,6 +128,7 @@ If the confirmation (RUSH or DUMP) doesn't arrive within 15 seconds of the BREAK
 | SPY | ~8 polls | ~18 polls |
 | QQQ | ~7 polls | ~16 polls |
 | IWM | ~6 polls | ~13 polls |
+| DIA | ~9 polls | ~20 polls |
 
 Because poll interval varies with time of day, the real-time warmup window is:
 
@@ -154,13 +157,14 @@ Your WiFi password and Finnhub API key are stored in ESP32 NVS (non-volatile sto
 
 ## 📋 Symbol Presets
 
-Each symbol has tuned EMA and chop parameters to match its typical volatility:
+Each symbol has tuned EMA and chop parameters to match its typical volatility. The system dynamically reads from a central registry, allowing easy customization in the code.
 
-| Symbol | Fast α | Slow α | Chop Limit |
-|---|---|---|---|
-| SPY | 0.22 | 0.10 | 0.010% |
-| QQQ | 0.25 | 0.12 | 0.014% |
-| IWM | 0.28 | 0.14 | 0.035% |
+| Symbol | Shortcut | Fast α | Slow α | Chop Limit |
+|---|---|---|---|---|
+| SPY | `1` | 0.22 | 0.10 | 0.010% |
+| QQQ | `2` | 0.25 | 0.12 | 0.014% |
+| IWM | `3` | 0.28 | 0.14 | 0.035% |
+| DIA | `4` | 0.20 | 0.09 | 0.008% |
 
 The chop limit can be fine-tuned at runtime via `+`/`-` keys or the web dashboard.
 
@@ -178,4 +182,4 @@ Squawk Box is a personal hobby project and paper-trading simulator. It does **no
 
 MIT License — see `LICENSE` for full text.
 
-Copyright © 2025 Jason Edgar
+Copyright © 2026 id8872
